@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import require_admin
-from ..models import Operator, OperatorRoleAssignmentAssignment, Role, Site, SiteAccess
+from ..models import Operator, OperatorRoleAssignment, Role, Site, SiteAccess
 from ..schemas import (AssignRoleRequest, GrantSiteRequest, OperatorWithRoles,
-                       OperatorRoleAssignmentOut, RoleOut, SiteAccessOut)
+                       OperatorRoleOut, RoleOut, SiteAccessOut)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -19,7 +19,7 @@ SITE_LEAD_SLUG = {
 
 def _build_operator_with_roles(op: Operator) -> OperatorWithRoles:
     roles = [
-        OperatorRoleAssignmentOut(
+        OperatorRoleOut(
             id=r.id,
             role_id=r.role_id,
             role_name=r.role.name if r.role else None,
