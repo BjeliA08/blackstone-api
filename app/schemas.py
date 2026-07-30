@@ -157,3 +157,46 @@ class CheckInStatusRow(BaseModel):
     status: CheckInStatus
     missed_check_in: bool
     missed_check_out: bool
+
+
+# ── Roles / Admin ─────────────────────────────────────────────────────────────
+
+class RoleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+
+
+class SiteAccessOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    site_id: uuid.UUID
+    site_name: Optional[str] = None
+    granted_at: datetime
+
+
+class OperatorRoleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    role_id: uuid.UUID
+    role_name: Optional[str] = None
+    assigned_at: datetime
+
+
+class OperatorWithRoles(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    full_name: str
+    phone_number: str
+    discord_id: Optional[str]
+    active: bool
+    roles: list[OperatorRoleOut] = []
+    site_accesses: list[SiteAccessOut] = []
+
+
+class AssignRoleRequest(BaseModel):
+    role_name: str
+
+
+class GrantSiteRequest(BaseModel):
+    site_slug: str

@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Date, DateTime, Enum as SAEnum,
-                        ForeignKey, Integer, String, Text, Time)
+                        ForeignKey, Integer, String, Text, Time, UniqueConstraint)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -40,6 +40,10 @@ class Operator(Base):
 
     assignments = relationship("Assignment", back_populates="operator")
     check_ins = relationship("CheckIn", back_populates="operator")
+    operator_roles = relationship("OperatorRole", back_populates="operator",
+                                  foreign_keys="OperatorRole.operator_id")
+    site_accesses = relationship("SiteAccess", back_populates="operator",
+                                 foreign_keys="SiteAccess.operator_id")
 
 
 class Site(Base):
@@ -103,3 +107,40 @@ class CheckIn(Base):
 
     assignment = relationship("Assignment", back_populates="check_in")
     operator = relationship("Operator", back_populates="check_ins")
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, unique=True, nullable=False)
+
+    operator_roles = relationship("OperatorRole", back_populates="role")
+
+
+class OperatorRole(Base):
+    __tablename__ = "operator_roles"
+    __table_args__ = (UniqueConstraint("operator_id", "role_id", name="uq_operator_role"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+    assigned_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+
+    operator = relationship("Operator", back_populates="operator_roles", foreign_keys=[operator_id])
+    role = relationship("Role", back_populates="operator_roles")
+
+
+class SiteAccess(Base):
+    __tablename__ = "site_access"
+    __table_args__ = (UniqueConstraint("operator_id", "site_id", name="uq_operator_site"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    granted_at = Column(DateTime, default=datetime.utcnow)
+    granted_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+
+    operator = relationship("Operator", back_populates="site_accesses", foreign_keys=[operator_id])
+    site = relationship("Site")
