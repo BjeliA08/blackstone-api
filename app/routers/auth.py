@@ -51,8 +51,17 @@ def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=OperatorOut)
-def me(current: Operator = Depends(get_current_operator)):
-    return current
+def me(current: Operator = Depends(get_current_operator), db: Session = Depends(get_db)):
+    from ..models import OperatorRoleAssignment, Role
+    has_admin = (
+        db.query(OperatorRoleAssignment)
+        .join(Role)
+        .filter(OperatorRoleAssignment.operator_id == current.id, Role.name == "admin")
+        .first()
+    )
+    result = OperatorOut.model_validate(current)
+    result.is_admin = bool(has_admin)
+    return result
 
 
 @router.post("/set-password", status_code=status.HTTP_204_NO_CONTENT)

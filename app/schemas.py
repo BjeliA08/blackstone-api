@@ -41,6 +41,7 @@ class OperatorOut(BaseModel):
     role: OperatorRole
     active: bool
     created_at: datetime
+    is_admin: bool = False
 
 
 class OperatorCreate(BaseModel):
