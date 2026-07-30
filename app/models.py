@@ -40,8 +40,8 @@ class Operator(Base):
 
     assignments = relationship("Assignment", back_populates="operator")
     check_ins = relationship("CheckIn", back_populates="operator")
-    operator_roles = relationship("OperatorRole", back_populates="operator",
-                                  foreign_keys="OperatorRole.operator_id")
+    operator_roles = relationship("OperatorRoleAssignment", back_populates="operator",
+                                  foreign_keys="OperatorRoleAssignment.operator_id")
     site_accesses = relationship("SiteAccess", back_populates="operator",
                                  foreign_keys="SiteAccess.operator_id")
 
@@ -115,10 +115,10 @@ class Role(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, unique=True, nullable=False)
 
-    operator_roles = relationship("OperatorRole", back_populates="role")
+    operator_roles = relationship("OperatorRoleAssignment", back_populates="role")
 
 
-class OperatorRole(Base):
+class OperatorRoleAssignment(Base):
     __tablename__ = "operator_roles"
     __table_args__ = (UniqueConstraint("operator_id", "role_id", name="uq_operator_role"),)
 

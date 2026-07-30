@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import require_admin
-from ..models import Operator, OperatorRole, Role, Site, SiteAccess
+from ..models import Operator, OperatorRoleAssignmentAssignment, Role, Site, SiteAccess
 from ..schemas import (AssignRoleRequest, GrantSiteRequest, OperatorWithRoles,
-                       OperatorRoleOut, RoleOut, SiteAccessOut)
+                       OperatorRoleAssignmentOut, RoleOut, SiteAccessOut)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -19,7 +19,7 @@ SITE_LEAD_SLUG = {
 
 def _build_operator_with_roles(op: Operator) -> OperatorWithRoles:
     roles = [
-        OperatorRoleOut(
+        OperatorRoleAssignmentOut(
             id=r.id,
             role_id=r.role_id,
             role_name=r.role.name if r.role else None,
@@ -51,7 +51,7 @@ def _load_operator(db: Session, operator_id: uuid.UUID) -> Operator:
     op = (
         db.query(Operator)
         .options(
-            joinedload(Operator.operator_roles).joinedload(OperatorRole.role),
+            joinedload(Operator.operator_roles).joinedload(OperatorRoleAssignment.role),
             joinedload(Operator.site_accesses).joinedload(SiteAccess.site),
         )
         .filter(Operator.id == operator_id)
@@ -82,7 +82,7 @@ def list_operators_with_roles(
     ops = (
         db.query(Operator)
         .options(
-            joinedload(Operator.operator_roles).joinedload(OperatorRole.role),
+            joinedload(Operator.operator_roles).joinedload(OperatorRoleAssignment.role),
             joinedload(Operator.site_accesses).joinedload(SiteAccess.site),
         )
         .order_by(Operator.full_name)
@@ -115,12 +115,12 @@ def assign_role(
     if not role:
         raise HTTPException(status_code=404, detail=f"Role '{body.role_name}' not found")
 
-    existing = db.query(OperatorRole).filter(
-        OperatorRole.operator_id == operator_id,
-        OperatorRole.role_id == role.id,
+    existing = db.query(OperatorRoleAssignment).filter(
+        OperatorRoleAssignment.operator_id == operator_id,
+        OperatorRoleAssignment.role_id == role.id,
     ).first()
     if not existing:
-        db.add(OperatorRole(
+        db.add(OperatorRoleAssignment(
             operator_id=operator_id,
             role_id=role.id,
             assigned_at=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -155,9 +155,9 @@ def remove_role(
     _: Operator = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    row = db.query(OperatorRole).filter(
-        OperatorRole.operator_id == operator_id,
-        OperatorRole.role_id == role_id,
+    row = db.query(OperatorRoleAssignment).filter(
+        OperatorRoleAssignment.operator_id == operator_id,
+        OperatorRoleAssignment.role_id == role_id,
     ).first()
     if row:
         db.delete(row)

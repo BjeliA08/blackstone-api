@@ -5,7 +5,7 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 from .auth import decode_token
 from .database import get_db
-from .models import Operator, OperatorRole, Role
+from .models import Operator, OperatorRole, OperatorRoleAssignment, Role
 
 bearer = HTTPBearer()
 
@@ -36,11 +36,10 @@ def require_admin(
     current: Operator = Depends(get_current_operator),
     db: Session = Depends(get_db),
 ) -> Operator:
-    from .models import OperatorRole as ORModel  # noqa: F811
     has_admin = (
-        db.query(ORModel)
+        db.query(OperatorRoleAssignment)
         .join(Role)
-        .filter(ORModel.operator_id == current.id, Role.name == "admin")
+        .filter(OperatorRoleAssignment.operator_id == current.id, Role.name == "admin")
         .first()
     )
     if not has_admin:
