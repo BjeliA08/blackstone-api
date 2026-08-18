@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
-from .models import CheckInStatus, OperatorRole, ShiftStatus
+from .models import AvailabilityStatus, CheckInStatus, OperatorRole, ShiftStatus
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -201,3 +201,81 @@ class AssignRoleRequest(BaseModel):
 
 class GrantSiteRequest(BaseModel):
     site_slug: str
+
+
+# ── Availability ──────────────────────────────────────────────────────────────
+
+class AvailabilityPeriodOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    month: int
+    year: int
+    opens_at: datetime
+    closes_at: datetime
+    status: AvailabilityStatus
+    created_at: datetime
+
+
+class AvailabilityPeriodCreate(BaseModel):
+    month: int
+    year: int
+    opens_at: datetime
+    closes_at: datetime
+    status: AvailabilityStatus = AvailabilityStatus.draft
+
+
+class AvailabilityPeriodPatch(BaseModel):
+    opens_at: Optional[datetime] = None
+    closes_at: Optional[datetime] = None
+    status: Optional[AvailabilityStatus] = None
+
+
+class AvailabilityEntryIn(BaseModel):
+    date: date
+    shift_name: str
+    available: bool
+    earliest_start: Optional[time] = None
+    latest_end: Optional[time] = None
+    note: Optional[str] = None
+
+
+class AvailabilityEntryOut(AvailabilityEntryIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+
+
+class AvailabilitySubmissionIn(BaseModel):
+    entries: list[AvailabilityEntryIn]
+
+
+class AvailabilitySubmissionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operator_id: uuid.UUID
+    period_id: uuid.UUID
+    submitted_at: datetime
+    updated_at: datetime
+    entries: list[AvailabilityEntryOut] = []
+
+
+class AvailabilitySubmissionWithOperator(AvailabilitySubmissionOut):
+    operator_name: str
+
+
+class MissingOperatorOut(BaseModel):
+    operator_id: uuid.UUID
+    operator_name: str
+
+
+class AvailabilitySummaryOperator(BaseModel):
+    operator_id: uuid.UUID
+    operator_name: str
+    earliest_start: Optional[time] = None
+    latest_end: Optional[time] = None
+    note: Optional[str] = None
+
+
+class AvailabilitySummaryCell(BaseModel):
+    date: date
+    shift_name: str
+    available_operators: list[AvailabilitySummaryOperator] = []

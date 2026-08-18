@@ -25,6 +25,12 @@ class CheckInStatus(str, enum.Enum):
     checked_out = "checked_out"
 
 
+class AvailabilityStatus(str, enum.Enum):
+    draft = "draft"
+    open = "open"
+    closed = "closed"
+
+
 class Operator(Base):
     __tablename__ = "operators"
 
@@ -144,3 +150,49 @@ class SiteAccess(Base):
 
     operator = relationship("Operator", back_populates="site_accesses", foreign_keys=[operator_id])
     site = relationship("Site")
+
+
+class AvailabilityPeriod(Base):
+    __tablename__ = "availability_periods"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    month = Column(Integer, nullable=False)
+    year = Column(Integer, nullable=False)
+    opens_at = Column(DateTime, nullable=False)
+    closes_at = Column(DateTime, nullable=False)
+    status = Column(SAEnum(AvailabilityStatus), nullable=False, default=AvailabilityStatus.draft)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    submissions = relationship("AvailabilitySubmission", back_populates="period",
+                               cascade="all, delete-orphan")
+
+
+class AvailabilitySubmission(Base):
+    __tablename__ = "availability_submissions"
+    __table_args__ = (UniqueConstraint("operator_id", "period_id", name="uq_operator_period"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    period_id = Column(UUID(as_uuid=True), ForeignKey("availability_periods.id", ondelete="CASCADE"), nullable=False)
+    submitted_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    operator = relationship("Operator")
+    period = relationship("AvailabilityPeriod", back_populates="submissions")
+    entries = relationship("AvailabilityEntry", back_populates="submission",
+                           cascade="all, delete-orphan")
+
+
+class AvailabilityEntry(Base):
+    __tablename__ = "availability_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    submission_id = Column(UUID(as_uuid=True), ForeignKey("availability_submissions.id", ondelete="CASCADE"), nullable=False)
+    date = Column(Date, nullable=False)
+    shift_name = Column(String, nullable=False)
+    available = Column(Boolean, nullable=False, default=False)
+    earliest_start = Column(Time, nullable=True)
+    latest_end = Column(Time, nullable=True)
+    note = Column(String, nullable=True)
+
+    submission = relationship("AvailabilitySubmission", back_populates="entries")
