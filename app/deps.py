@@ -26,8 +26,20 @@ def get_current_operator(
     return op
 
 
-def require_director(current: Operator = Depends(get_current_operator)) -> Operator:
-    if current.role not in (OperatorRole.director, OperatorRole.admin):
+def require_director(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+) -> Operator:
+    if current.role in (OperatorRole.director, OperatorRole.admin):
+        return current
+    has_director_or_admin = (
+        db.query(OperatorRoleAssignment)
+        .join(Role)
+        .filter(OperatorRoleAssignment.operator_id == current.id,
+                Role.name.in_(["admin", "director"]))
+        .first()
+    )
+    if not has_director_or_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Director role required")
     return current
 
