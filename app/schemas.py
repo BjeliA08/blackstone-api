@@ -3,8 +3,8 @@ import uuid
 from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
-from .models import (AvailabilityStatus, CheckInStatus, CoverageType,
-                     OperatorRole, ShiftStatus)
+from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
+                     CoverageType, OperatorRole, ShiftStatus)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -360,3 +360,35 @@ class AvailabilitySummaryCell(BaseModel):
     # Split out so a director never reads a fallback offer as real coverage.
     full_count: int = 0
     partial_count: int = 0
+
+
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+class ChatChannelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    slug: str
+    name: str
+    channel_type: ChatChannelType
+    site_slug: Optional[str] = None
+    unread_count: int = 0
+    last_message_at: Optional[datetime] = None
+
+
+class ChatMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    channel_id: uuid.UUID
+    operator_id: uuid.UUID
+    operator_name: str
+    body: str
+    created_at: datetime
+
+
+class ChatMessageCreate(BaseModel):
+    body: str
+
+
+class ChatReadResult(BaseModel):
+    channel_id: uuid.UUID
+    last_read_at: datetime

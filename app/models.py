@@ -36,6 +36,13 @@ class CoverageType(str, enum.Enum):
     partial_fallback = "partial_fallback"
 
 
+class ChatChannelType(str, enum.Enum):
+    site = "site"
+    site_leads = "site_leads"
+    directors = "directors"
+    admin = "admin"
+
+
 class Operator(Base):
     __tablename__ = "operators"
 
@@ -221,3 +228,41 @@ class AvailabilityEntry(Base):
 
     submission = relationship("AvailabilitySubmission", back_populates="entries")
     site = relationship("Site")
+
+
+class ChatChannel(Base):
+    __tablename__ = "chat_channels"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    channel_type = Column(SAEnum(ChatChannelType), nullable=False)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    site = relationship("Site")
+    messages = relationship("ChatMessage", back_populates="channel",
+                            cascade="all, delete-orphan")
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_id = Column(UUID(as_uuid=True), ForeignKey("chat_channels.id", ondelete="CASCADE"), nullable=False)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    channel = relationship("ChatChannel", back_populates="messages")
+    operator = relationship("Operator")
+
+
+class ChatRead(Base):
+    __tablename__ = "chat_reads"
+    __table_args__ = (UniqueConstraint("channel_id", "operator_id", name="uq_chat_read"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    channel_id = Column(UUID(as_uuid=True), ForeignKey("chat_channels.id", ondelete="CASCADE"), nullable=False)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    last_read_at = Column(DateTime, default=datetime.utcnow, nullable=False)
