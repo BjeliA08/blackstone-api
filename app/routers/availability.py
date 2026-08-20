@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import get_current_operator, require_director
+from ..business import narrows_shift, shifts_are_consecutive
 from ..models import (AvailabilityEntry, AvailabilityPeriod, AvailabilityStatus,
-                      AvailabilitySubmission, Operator, Site, SiteShift)
+                      AvailabilitySubmission, CoverageType, Operator, Site,
+                      SiteShift)
 from ..schemas import (AvailabilityEntryOut, AvailabilityPeriodCreate,
                        AvailabilityPeriodOut, AvailabilityPeriodPatch,
                        AvailabilitySubmissionIn, AvailabilitySubmissionOut,
@@ -41,6 +43,56 @@ def _build_site_shift_out(ss: SiteShift) -> SiteShiftOut:
         sort_order=ss.sort_order,
         active=ss.active,
     )
+
+
+def _derive_coverage_types(db: Session, entries) -> list[CoverageType]:
+    """An entry is partial_fallback when it is the *second* of two consecutive
+    available shifts at the same site on the same day and the operator's limits
+    cover less than that shift. Derived server-side so the stored value cannot
+    disagree with the times, whatever a client sends.
+    """
+    shifts = (
+        db.query(SiteShift)
+        .filter(SiteShift.active.is_(True))
+        .order_by(SiteShift.sort_order)
+        .all()
+    )
+    # (site_id, shift_name) -> (start, end)
+    windows = {
+        (ss.site_id, ss.shift_name): (ss.start_time, ss.end_time)
+        for ss in shifts
+        if ss.start_time and ss.end_time
+    }
+
+    available_keys = {
+        (e.site_id, e.date, e.shift_name) for e in entries if e.available
+    }
+
+    result: list[CoverageType] = []
+    for e in entries:
+        win = windows.get((e.site_id, e.shift_name))
+        if not e.available or not win:
+            result.append(CoverageType.full)
+            continue
+
+        start, end = win
+        if not narrows_shift(start, end, e.earliest_start, e.latest_end):
+            result.append(CoverageType.full)
+            continue
+
+        # Narrowed — only a fallback if it directly follows another shift the
+        # operator also offered that day at this site.
+        follows_available_shift = any(
+            other_name != e.shift_name
+            and (e.site_id, e.date, other_name) in available_keys
+            and shifts_are_consecutive(other_win[1], start)
+            for (sid, other_name), other_win in windows.items()
+            if sid == e.site_id and other_win[0] and other_win[1]
+        )
+        result.append(
+            CoverageType.partial_fallback if follows_available_shift else CoverageType.full
+        )
+    return result
 
 
 def _build_submission_out(sub: AvailabilitySubmission) -> AvailabilitySubmissionOut:
@@ -246,7 +298,8 @@ def upsert_my_submission(
         db.flush()
 
     valid_site_ids = {s.id for s in db.query(Site).filter(Site.active.is_(True)).all()}
-    for entry in body.entries:
+    coverage = _derive_coverage_types(db, body.entries)
+    for idx, entry in enumerate(body.entries):
         if entry.site_id not in valid_site_ids:
             raise HTTPException(status_code=400,
                                 detail=f"Unknown site on entry for {entry.date} {entry.shift_name}")
@@ -259,6 +312,7 @@ def upsert_my_submission(
             earliest_start=entry.earliest_start,
             latest_end=entry.latest_end,
             note=entry.note,
+            coverage_type=coverage[idx],
         ))
 
     db.commit()
@@ -416,6 +470,7 @@ def period_summary(
                 earliest_start=entry.earliest_start,
                 latest_end=entry.latest_end,
                 note=entry.note,
+                coverage_type=entry.coverage_type,
             ))
 
     return [
@@ -424,7 +479,9 @@ def period_summary(
             site_id=site_id,
             site_slug=slug_by_site.get(site_id),
             shift_name=shift,
-            available_operators=ops,
+            available_operators=sorted(ops, key=lambda o: o.coverage_type != CoverageType.full),
+            full_count=sum(1 for o in ops if o.coverage_type == CoverageType.full),
+            partial_count=sum(1 for o in ops if o.coverage_type == CoverageType.partial_fallback),
         )
         for (d, site_id, shift), ops in sorted(
             cells.items(), key=lambda kv: (kv[0][0], slug_by_site.get(kv[0][1]) or "", kv[0][2])

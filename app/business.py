@@ -2,9 +2,20 @@
 Business logic ported from the Discord bot.
 All overnight-aware — a shift whose end_time <= start_time crosses midnight.
 """
+from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from typing import Optional
 from .models import Assignment, CheckIn, CheckInStatus
+
+
+@dataclass
+class Candidate:
+    """A single operator's offer for one slot, as the selection rule sees it."""
+    operator_id: object
+    operator_name: str
+    coverage_type: str  # "full" | "partial_fallback"
+    earliest_start: Optional[time] = None
+    latest_end: Optional[time] = None
 
 
 def _to_minutes(t: time) -> int:
@@ -69,6 +80,94 @@ def operator_has_overlap(
         if times_overlap(start, end, a.start_time, a.end_time):
             return True
     return False
+
+
+def shift_window_minutes(start: time, end: time) -> tuple[int, int]:
+    """Shift bounds in minutes from midnight, with the end pushed past 1440 when
+    the shift crosses midnight (Overnight 2300-0700 -> (1380, 1860))."""
+    s, e = _to_minutes(start), _to_minutes(end)
+    if e <= s:
+        e += 1440
+    return s, e
+
+
+def _bound_within(shift_start_min: int, shift_end_min: int, t: time) -> int:
+    """Place a wall-clock time onto the shift's timeline, accounting for a
+    shift that runs past midnight."""
+    m = _to_minutes(t)
+    if m < shift_start_min:
+        m += 1440
+    return m
+
+
+def narrows_shift(
+    shift_start: time,
+    shift_end: time,
+    earliest_start: Optional[time],
+    latest_end: Optional[time],
+) -> bool:
+    """True if the operator's limits cover less than the whole shift."""
+    s, e = shift_window_minutes(shift_start, shift_end)
+    if latest_end is not None and _bound_within(s, e, latest_end) < e:
+        return True
+    if earliest_start is not None and _bound_within(s, e, earliest_start) > s:
+        return True
+    return False
+
+
+def shifts_are_consecutive(first_end: time, second_start: time) -> bool:
+    """Back-to-back shifts: the second starts exactly when the first ends."""
+    return _to_minutes(first_end) == _to_minutes(second_start)
+
+
+def covered_window(
+    shift_start: time,
+    shift_end: time,
+    earliest_start: Optional[time],
+    latest_end: Optional[time],
+) -> tuple[int, int]:
+    """The minutes range an operator actually covers within a shift."""
+    s, e = shift_window_minutes(shift_start, shift_end)
+    lo = _bound_within(s, e, earliest_start) if earliest_start else s
+    hi = _bound_within(s, e, latest_end) if latest_end else e
+    return max(lo, s), min(hi, e)
+
+
+def minutes_to_time(m: int) -> time:
+    """Wrap minutes-from-midnight (possibly >1440) back to a clock time."""
+    m %= 1440
+    return time(m // 60, m % 60)
+
+
+def select_candidates(candidates: list["Candidate"]) -> list["Candidate"]:
+    """Order a slot's candidate pool.
+
+    The rule is absolute: a partial_fallback offer is never returned while any
+    full candidate exists, regardless of hours, seniority or any other ranking.
+    Partial offers are only surfaced once the full pool is empty.
+    """
+    full = [c for c in candidates if c.coverage_type == "full"]
+    if full:
+        return full
+    return [c for c in candidates if c.coverage_type == "partial_fallback"]
+
+
+def remainder_after_partial(
+    shift_start: time,
+    shift_end: time,
+    covered_start: time,
+    covered_end: time,
+) -> Optional[tuple[time, time]]:
+    """The uncovered tail of a shift left by a partial assignment, or None if
+    the shift is fully covered. This is what must become its own open slot —
+    without it a director sees a name on the slot and assumes it is filled.
+    """
+    s, e = shift_window_minutes(shift_start, shift_end)
+    cov_lo = _bound_within(s, e, covered_start)
+    cov_hi = _bound_within(s, e, covered_end)
+    if cov_hi >= e:
+        return None
+    return minutes_to_time(cov_hi), minutes_to_time(e)
 
 
 def is_missed_check_in(check_in: CheckIn) -> bool:

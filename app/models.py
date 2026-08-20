@@ -31,6 +31,11 @@ class AvailabilityStatus(str, enum.Enum):
     closed = "closed"
 
 
+class CoverageType(str, enum.Enum):
+    full = "full"
+    partial_fallback = "partial_fallback"
+
+
 class Operator(Base):
     __tablename__ = "operators"
 
@@ -212,6 +217,7 @@ class AvailabilityEntry(Base):
     earliest_start = Column(Time, nullable=True)
     latest_end = Column(Time, nullable=True)
     note = Column(String, nullable=True)
+    coverage_type = Column(SAEnum(CoverageType), nullable=False, default=CoverageType.full)
 
     submission = relationship("AvailabilitySubmission", back_populates="entries")
     site = relationship("Site")

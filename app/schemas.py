@@ -3,7 +3,8 @@ import uuid
 from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
-from .models import AvailabilityStatus, CheckInStatus, OperatorRole, ShiftStatus
+from .models import (AvailabilityStatus, CheckInStatus, CoverageType,
+                     OperatorRole, ShiftStatus)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -273,6 +274,8 @@ class AvailabilityEntryIn(BaseModel):
 class AvailabilityEntryOut(AvailabilityEntryIn):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
+    # Derived server-side from the shift window; clients cannot set it.
+    coverage_type: CoverageType = CoverageType.full
 
 
 class AvailabilitySubmissionIn(BaseModel):
@@ -304,6 +307,7 @@ class AvailabilitySummaryOperator(BaseModel):
     earliest_start: Optional[time] = None
     latest_end: Optional[time] = None
     note: Optional[str] = None
+    coverage_type: CoverageType = CoverageType.full
 
 
 class AvailabilitySummaryCell(BaseModel):
@@ -312,3 +316,6 @@ class AvailabilitySummaryCell(BaseModel):
     site_slug: Optional[str] = None
     shift_name: str
     available_operators: list[AvailabilitySummaryOperator] = []
+    # Split out so a director never reads a fallback offer as real coverage.
+    full_count: int = 0
+    partial_count: int = 0
