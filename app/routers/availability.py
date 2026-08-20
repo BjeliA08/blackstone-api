@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import get_current_operator, require_director
 from ..business import narrows_shift, shifts_are_consecutive
-from ..models import (AvailabilityEntry, AvailabilityPeriod, AvailabilityStatus,
-                      AvailabilitySubmission, CoverageType, Operator, Site,
-                      SiteShift)
+from ..models import (Assignment, AvailabilityEntry, AvailabilityPeriod,
+                      AvailabilityStatus, AvailabilitySubmission, CoverageType,
+                      Operator, Shift, ShiftStatus, Site, SiteShift)
 from ..scheduler import generate_schedule
-from ..schemas import (AvailabilityEntryOut, AvailabilityPeriodCreate,
+from ..schemas import (ApproveDraftResult, AssignmentOut, ShiftOut,
+                       AvailabilityEntryOut, AvailabilityPeriodCreate,
                        AvailabilityPeriodOut, AvailabilityPeriodPatch,
                        AvailabilitySubmissionIn, AvailabilitySubmissionOut,
                        AvailabilitySubmissionWithOperator,
@@ -485,6 +486,60 @@ def generate_schedule_for_period(
         hours_by_operator=result.hours_by_operator,
         warnings=result.warnings,
     )
+
+
+def _period_dates(period: AvailabilityPeriod) -> list:
+    from calendar import monthrange
+    from datetime import date as _date
+    days = monthrange(period.year, period.month)[1]
+    return [_date(period.year, period.month, d) for d in range(1, days + 1)]
+
+
+@router.get("/availability/periods/{period_id}/draft", response_model=list[ShiftOut])
+def get_draft_schedule(
+    period_id: uuid.UUID,
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """The generated draft for this period, for review before approval."""
+    period = _get_period_or_404(db, period_id)
+    shifts = (
+        db.query(Shift)
+        .filter(Shift.date.in_(_period_dates(period)), Shift.status == ShiftStatus.draft)
+        .options(joinedload(Shift.assignments).joinedload(Assignment.operator),
+                 joinedload(Shift.site))
+        .order_by(Shift.date, Shift.shift_name)
+        .all()
+    )
+    return [
+        ShiftOut(
+            id=s.id, site_id=s.site_id,
+            site_name=s.site.name if s.site else None,
+            date=s.date, shift_name=s.shift_name, status=s.status,
+            assignments=[AssignmentOut.from_orm_with_name(a) for a in s.assignments],
+        )
+        for s in shifts
+    ]
+
+
+@router.post("/availability/periods/{period_id}/approve", response_model=ApproveDraftResult)
+def approve_draft_schedule(
+    period_id: uuid.UUID,
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """Publish the draft. Open slots stay open — approving does not invent
+    coverage, it just makes the schedule live."""
+    period = _get_period_or_404(db, period_id)
+    drafts = (
+        db.query(Shift)
+        .filter(Shift.date.in_(_period_dates(period)), Shift.status == ShiftStatus.draft)
+        .all()
+    )
+    for s in drafts:
+        s.status = ShiftStatus.approved
+    db.commit()
+    return ApproveDraftResult(approved=len(drafts))
 
 
 @router.get("/availability/periods/{period_id}/summary", response_model=list[AvailabilitySummaryCell])

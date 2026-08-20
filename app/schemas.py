@@ -310,6 +310,10 @@ class AvailabilitySummaryOperator(BaseModel):
     coverage_type: CoverageType = CoverageType.full
 
 
+class ApproveDraftResult(BaseModel):
+    approved: int
+
+
 class GenerateScheduleRequest(BaseModel):
     respect_site_access: bool = True
     replace_existing_drafts: bool = True
