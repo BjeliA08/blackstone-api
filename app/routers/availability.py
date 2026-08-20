@@ -9,13 +9,15 @@ from ..business import narrows_shift, shifts_are_consecutive
 from ..models import (AvailabilityEntry, AvailabilityPeriod, AvailabilityStatus,
                       AvailabilitySubmission, CoverageType, Operator, Site,
                       SiteShift)
+from ..scheduler import generate_schedule
 from ..schemas import (AvailabilityEntryOut, AvailabilityPeriodCreate,
                        AvailabilityPeriodOut, AvailabilityPeriodPatch,
                        AvailabilitySubmissionIn, AvailabilitySubmissionOut,
                        AvailabilitySubmissionWithOperator,
                        AvailabilitySummaryCell, AvailabilitySummaryOperator,
-                       MissingOperatorOut, SiteShiftCreate, SiteShiftOut,
-                       SiteShiftPatch)
+                       GenerateScheduleRequest, GenerationResultOut,
+                       MissingOperatorOut, PartialFillOut, SiteShiftCreate,
+                       SiteShiftOut, SiteShiftPatch, UnfilledSlotOut)
 
 router = APIRouter(tags=["availability"])
 
@@ -438,6 +440,51 @@ def period_missing(
         for op in operators
         if op.id not in submitted_ids
     ]
+
+
+@router.post("/availability/periods/{period_id}/generate-schedule",
+             response_model=GenerationResultOut)
+def generate_schedule_for_period(
+    period_id: uuid.UUID,
+    body: GenerateScheduleRequest,
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """Build a draft schedule from submitted availability.
+
+    Output is always draft — a director reviews before anything goes live.
+    Re-running replaces the previous draft for the same month; approved
+    shifts are never touched.
+    """
+    period = _get_period_or_404(db, period_id)
+    result = generate_schedule(
+        db, period,
+        respect_site_access=body.respect_site_access,
+        replace_existing_drafts=body.replace_existing_drafts,
+    )
+    return GenerationResultOut(
+        period_id=result.period_id,
+        shifts_created=result.shifts_created,
+        slots_total=result.slots_total,
+        slots_filled=result.slots_filled,
+        slots_open=result.slots_open,
+        partial_fills=[
+            PartialFillOut(
+                date=p.date, site_slug=p.site_slug, shift_name=p.shift_name,
+                operator_name=p.operator_name,
+                covered_start=p.covered_start, covered_end=p.covered_end,
+                remainder_start=p.remainder_start, remainder_end=p.remainder_end,
+                description=p.describe(),
+            ) for p in result.partial_fills
+        ],
+        unfilled=[
+            UnfilledSlotOut(date=u.date, site_slug=u.site_slug, shift_name=u.shift_name,
+                            slot_index=u.slot_index, reason=u.reason)
+            for u in result.unfilled
+        ],
+        hours_by_operator=result.hours_by_operator,
+        warnings=result.warnings,
+    )
 
 
 @router.get("/availability/periods/{period_id}/summary", response_model=list[AvailabilitySummaryCell])

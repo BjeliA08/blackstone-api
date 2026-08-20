@@ -310,6 +310,43 @@ class AvailabilitySummaryOperator(BaseModel):
     coverage_type: CoverageType = CoverageType.full
 
 
+class GenerateScheduleRequest(BaseModel):
+    respect_site_access: bool = True
+    replace_existing_drafts: bool = True
+
+
+class UnfilledSlotOut(BaseModel):
+    date: date
+    site_slug: str
+    shift_name: str
+    slot_index: int
+    reason: str
+
+
+class PartialFillOut(BaseModel):
+    date: date
+    site_slug: str
+    shift_name: str
+    operator_name: str
+    covered_start: time
+    covered_end: time
+    remainder_start: time
+    remainder_end: time
+    description: str
+
+
+class GenerationResultOut(BaseModel):
+    period_id: uuid.UUID
+    shifts_created: int
+    slots_total: int
+    slots_filled: int
+    slots_open: int
+    partial_fills: list[PartialFillOut] = []
+    unfilled: list[UnfilledSlotOut] = []
+    hours_by_operator: dict[str, float] = {}
+    warnings: list[str] = []
+
+
 class AvailabilitySummaryCell(BaseModel):
     date: date
     site_id: uuid.UUID
