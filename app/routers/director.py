@@ -84,8 +84,10 @@ def create_operator(
         raise HTTPException(status_code=409, detail="Phone number already registered")
 
     setup_code = secrets.token_hex(4).upper()  # 8-char hex code to DM to operator
+    first_name, _, last_name = body.full_name.strip().partition(" ")
     op = Operator(
-        full_name=body.full_name,
+        first_name=first_name,
+        last_name=last_name,
         phone_number=body.phone_number,
         discord_id=body.discord_id,
         role=body.role,

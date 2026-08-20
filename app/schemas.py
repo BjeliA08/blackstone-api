@@ -4,7 +4,8 @@ from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
-                     CoverageType, OperatorRole, ShiftStatus)
+                     CoverageType, LicenceStatus, OnboardingStatus,
+                     OperatorRole, ShiftStatus)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ class OperatorOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    first_name: str
+    last_name: str
     full_name: str
     phone_number: str
     discord_id: Optional[str]
@@ -43,6 +46,14 @@ class OperatorOut(BaseModel):
     active: bool
     created_at: datetime
     is_admin: bool = False
+    onboarding_status: OnboardingStatus = OnboardingStatus.active
+    profile_complete: bool = False
+    has_photo: bool = False
+    # Compliance data — present only for Admin, Directors, and the operator
+    # viewing their own profile. Absent entirely otherwise.
+    security_licence_number: Optional[str] = None
+    security_licence_expiry: Optional[date] = None
+    licence_status: Optional[LicenceStatus] = None
 
 
 class OperatorCreate(BaseModel):
@@ -392,3 +403,51 @@ class ChatMessageCreate(BaseModel):
 class ChatReadResult(BaseModel):
     channel_id: uuid.UUID
     last_read_at: datetime
+
+
+# ── Signup & invite codes ─────────────────────────────────────────────────────
+
+class ValidateCodeRequest(BaseModel):
+    code: str
+
+
+class ValidateCodeResult(BaseModel):
+    valid: bool
+    # Deliberately no reason field — a caller must not learn whether a code
+    # was wrong, expired, revoked or used up.
+
+
+class SignupRequest(BaseModel):
+    code: str
+    first_name: str
+    last_name: str
+    phone_number: str
+    password: str
+
+
+class ProfilePatch(BaseModel):
+    security_licence_number: Optional[str] = None
+    security_licence_expiry: Optional[date] = None
+
+
+class InviteCodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    max_uses: int
+    use_count: int
+    uses_remaining: int
+    revoked: bool
+    status: str          # active | used_up | expired | revoked
+    intended_role: Optional[str] = None
+    intended_site_access: Optional[list[str]] = None
+
+
+class InviteCodeCreate(BaseModel):
+    max_uses: int = 1
+    expires_in_days: Optional[int] = 14
+    intended_role: Optional[str] = None
+    intended_site_access: Optional[list[str]] = None

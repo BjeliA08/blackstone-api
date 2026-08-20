@@ -94,7 +94,8 @@ def get_or_create_operator(db: Session, name_cache: dict, full_name: str) -> Ope
         return name_cache[normalized]
     op = db.query(Operator).filter(Operator.full_name == normalized).first()
     if not op:
-        op = Operator(full_name=normalized, phone_number=f"IMPORT_{normalized.replace(' ', '_')}",
+        _fn, _, _ln = normalized.partition(' ')
+        op = Operator(first_name=_fn, last_name=_ln, phone_number=f"IMPORT_{normalized.replace(' ', '_')}",
                       role=OperatorRole.operator, active=True)
         db.add(op)
         db.flush()
@@ -123,7 +124,8 @@ def import_employees(db: Session, ws, name_cache: dict):
             name_cache[full_name] = existing
         else:
             phone = f"IMPORT_{full_name.replace(' ', '_')}"
-            op = Operator(full_name=full_name, phone_number=phone,
+            _fn, _, _ln = full_name.partition(' ')
+            op = Operator(first_name=_fn, last_name=_ln, phone_number=phone,
                           discord_id=discord_id, role=role, active=active)
             db.add(op)
             db.flush()

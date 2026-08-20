@@ -1,12 +1,15 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..deps import require_admin
-from ..models import Operator, OperatorRoleAssignment, Role, Site, SiteAccess
-from ..schemas import (AssignRoleRequest, GrantSiteRequest, OperatorWithRoles,
-                       OperatorRoleOut, RoleOut, SiteAccessOut)
+from ..deps import require_admin, require_director
+from ..identity import generate_code
+from ..models import (InviteCode, Operator, OperatorRoleAssignment, Role,
+                      Site, SiteAccess)
+from ..schemas import (AssignRoleRequest, GrantSiteRequest, InviteCodeCreate,
+                       InviteCodeOut, OperatorWithRoles, OperatorRoleOut,
+                       RoleOut, SiteAccessOut)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -211,3 +214,88 @@ def revoke_site_access(
         db.delete(row)
         db.commit()
     return _build_operator_with_roles(_load_operator(db, operator_id))
+
+
+# ── Invite codes ──────────────────────────────────────────────────────────────
+
+def _code_status(c: InviteCode, now: datetime) -> str:
+    if c.revoked:
+        return "revoked"
+    if c.expires_at is not None and now > c.expires_at:
+        return "expired"
+    if c.use_count >= c.max_uses:
+        return "used_up"
+    return "active"
+
+
+def _invite_out(c: InviteCode, now: datetime) -> InviteCodeOut:
+    return InviteCodeOut(
+        id=c.id, code=c.code,
+        created_by_name=c.creator.full_name if c.creator else None,
+        created_at=c.created_at, expires_at=c.expires_at,
+        max_uses=c.max_uses, use_count=c.use_count,
+        uses_remaining=max(c.max_uses - c.use_count, 0),
+        revoked=c.revoked, status=_code_status(c, now),
+        intended_role=c.intended_role,
+        intended_site_access=c.intended_site_access,
+    )
+
+
+@router.get("/invite-codes", response_model=list[InviteCodeOut])
+def list_invite_codes(
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rows = (
+        db.query(InviteCode)
+        .options(joinedload(InviteCode.creator))
+        .order_by(InviteCode.created_at.desc())
+        .all()
+    )
+    return [_invite_out(c, now) for c in rows]
+
+
+@router.post("/invite-codes", response_model=InviteCodeOut, status_code=201)
+def create_invite_code(
+    body: InviteCodeCreate,
+    current: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if body.max_uses < 1:
+        raise HTTPException(status_code=400, detail="A code must allow at least one use")
+    if body.intended_role:
+        if not db.query(Role).filter(Role.name == body.intended_role).first():
+            raise HTTPException(status_code=404, detail=f"Role '{body.intended_role}' not found")
+    for slug in (body.intended_site_access or []):
+        if not db.query(Site).filter(Site.slug == slug).first():
+            raise HTTPException(status_code=404, detail=f"Site '{slug}' not found")
+
+    code = InviteCode(
+        code=generate_code(db),
+        created_by=current.id,
+        created_at=now,
+        expires_at=(now + timedelta(days=body.expires_in_days)) if body.expires_in_days else None,
+        max_uses=body.max_uses,
+        intended_role=body.intended_role,
+        intended_site_access=body.intended_site_access or None,
+    )
+    db.add(code)
+    db.commit()
+    db.refresh(code)
+    return _invite_out(code, now)
+
+
+@router.delete("/invite-codes/{code_id}", status_code=204)
+def revoke_invite_code(
+    code_id: uuid.UUID,
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """Revoked rather than deleted, so the record of who issued it survives."""
+    row = db.get(InviteCode, code_id)
+    if row and not row.revoked:
+        row.revoked = True
+        db.commit()

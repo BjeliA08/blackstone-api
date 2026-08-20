@@ -3,7 +3,9 @@ import enum
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Date, DateTime, Enum as SAEnum,
                         ForeignKey, Integer, String, Text, Time, UniqueConstraint)
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy import func
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -36,6 +38,20 @@ class CoverageType(str, enum.Enum):
     partial_fallback = "partial_fallback"
 
 
+class OnboardingStatus(str, enum.Enum):
+    invited = "invited"
+    profile_pending = "profile_pending"
+    active = "active"
+    deactivated = "deactivated"
+
+
+class LicenceStatus(str, enum.Enum):
+    valid = "valid"
+    expiring_soon = "expiring_soon"
+    expired = "expired"
+    missing = "missing"
+
+
 class ChatChannelType(str, enum.Enum):
     site = "site"
     site_leads = "site_leads"
@@ -47,7 +63,8 @@ class Operator(Base):
     __tablename__ = "operators"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    full_name = Column(String, nullable=False)
+    first_name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False, default="")
     phone_number = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=True)
     setup_code = Column(String, nullable=True)
@@ -55,6 +72,30 @@ class Operator(Base):
     role = Column(SAEnum(OperatorRole), nullable=False, default=OperatorRole.operator)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    security_licence_number = Column(String, nullable=True)
+    security_licence_expiry = Column(Date, nullable=True)
+    photo_key = Column(String, nullable=True)
+    onboarding_status = Column(SAEnum(OnboardingStatus), nullable=False,
+                               default=OnboardingStatus.invited)
+    invited_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+
+    @hybrid_property
+    def full_name(self) -> str:
+        """There are no nicknames or display names anywhere — an operator is
+        always their real first and last name."""
+        return f"{self.first_name} {self.last_name}".strip()
+
+    @full_name.expression
+    def full_name(cls):
+        # Keeps order_by/filter on full_name working in SQL.
+        return func.trim(func.concat(cls.first_name, " ", func.coalesce(cls.last_name, "")))
+
+    @property
+    def profile_complete(self) -> bool:
+        return bool(self.photo_key and self.security_licence_number
+                    and self.security_licence_expiry)
 
     assignments = relationship("Assignment", back_populates="operator")
     check_ins = relationship("CheckIn", back_populates="operator")
@@ -266,3 +307,29 @@ class ChatRead(Base):
     channel_id = Column(UUID(as_uuid=True), ForeignKey("chat_channels.id", ondelete="CASCADE"), nullable=False)
     operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
     last_read_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class InviteCode(Base):
+    """Signup is impossible without one of these. Codes can pre-assign a role
+    and site access so a new hire arrives already configured."""
+    __tablename__ = "invite_codes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    code = Column(String, unique=True, nullable=False, index=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    max_uses = Column(Integer, nullable=False, default=1)
+    use_count = Column(Integer, nullable=False, default=0)
+    revoked = Column(Boolean, nullable=False, default=False)
+    intended_role = Column(String, nullable=True)
+    intended_site_access = Column(ARRAY(String), nullable=True)
+
+    creator = relationship("Operator", foreign_keys=[created_by])
+
+    def usable_at(self, now: datetime) -> bool:
+        if self.revoked:
+            return False
+        if self.expires_at is not None and now > self.expires_at:
+            return False
+        return self.use_count < self.max_uses

@@ -7,9 +7,11 @@ from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out, operator_has_overlap)
 from ..database import get_db
 from ..deps import get_current_operator
-from ..models import (Assignment, CheckIn, CheckInStatus, Operator, Shift,
-                      ShiftStatus)
-from ..schemas import AssignmentOut, CheckInOut, HoursSummary, ShiftOut
+from ..identity import can_view_licence, licence_status, role_names
+from ..models import (Assignment, CheckIn, CheckInStatus, OnboardingStatus,
+                      Operator, Shift, ShiftStatus)
+from ..schemas import (AssignmentOut, CheckInOut, HoursSummary, OperatorOut,
+                       ProfilePatch, ShiftOut)
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -217,3 +219,73 @@ def claim_contract(
     db.commit()
     db.refresh(a)
     return AssignmentOut.from_orm_with_name(a)
+
+
+# ── Own profile ───────────────────────────────────────────────────────────────
+
+def serialize_operator(db, target: Operator, viewer: Operator) -> OperatorOut:
+    """Licence data is omitted from the payload entirely unless the viewer
+    qualifies — not merely hidden by the UI."""
+    roles = role_names(db, viewer)
+    show_licence = can_view_licence(roles, viewer.id, target.id)
+    return OperatorOut(
+        id=target.id,
+        first_name=target.first_name,
+        last_name=target.last_name,
+        full_name=target.full_name,
+        phone_number=target.phone_number,
+        discord_id=target.discord_id,
+        role=target.role,
+        active=target.active,
+        created_at=target.created_at,
+        is_admin="admin" in role_names(db, target),
+        onboarding_status=target.onboarding_status,
+        profile_complete=target.profile_complete,
+        has_photo=bool(target.photo_key),
+        security_licence_number=target.security_licence_number if show_licence else None,
+        security_licence_expiry=target.security_licence_expiry if show_licence else None,
+        licence_status=licence_status(target) if show_licence else None,
+    )
+
+
+@router.get("/profile", response_model=OperatorOut)
+def my_profile(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    return serialize_operator(db, current, current)
+
+
+@router.patch("/profile", response_model=OperatorOut)
+def patch_my_profile(
+    body: ProfilePatch,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """An operator maintains their own licence details. Names are deliberately
+    not editable here — a name change goes through an Admin."""
+    if body.security_licence_number is not None:
+        number = body.security_licence_number.strip()
+        if not number:
+            raise HTTPException(status_code=400, detail="Licence number cannot be empty")
+        current.security_licence_number = number
+
+    if body.security_licence_expiry is not None:
+        today = datetime.now(timezone.utc).date()
+        if body.security_licence_expiry < today:
+            raise HTTPException(
+                status_code=400,
+                detail="That licence has already expired. Speak to a Director rather than "
+                       "entering an expired date.",
+            )
+        current.security_licence_expiry = body.security_licence_expiry
+
+    # Onboarding completes only when everything required is present.
+    if (current.onboarding_status == OnboardingStatus.profile_pending
+            and current.profile_complete):
+        current.onboarding_status = OnboardingStatus.active
+        current.activated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    db.commit()
+    db.refresh(current)
+    return serialize_operator(db, current, current)
