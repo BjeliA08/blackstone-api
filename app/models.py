@@ -183,11 +183,27 @@ class AvailabilitySubmission(Base):
                            cascade="all, delete-orphan")
 
 
+class SiteShift(Base):
+    """Director-editable shift names per site — sites do not all run the same shifts."""
+    __tablename__ = "site_shifts"
+    __table_args__ = (UniqueConstraint("site_id", "shift_name", name="uq_site_shift_name"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    shift_name = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    site = relationship("Site")
+
+
 class AvailabilityEntry(Base):
     __tablename__ = "availability_entries"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     submission_id = Column(UUID(as_uuid=True), ForeignKey("availability_submissions.id", ondelete="CASCADE"), nullable=False)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
     date = Column(Date, nullable=False)
     shift_name = Column(String, nullable=False)
     available = Column(Boolean, nullable=False, default=False)
@@ -196,3 +212,4 @@ class AvailabilityEntry(Base):
     note = Column(String, nullable=True)
 
     submission = relationship("AvailabilitySubmission", back_populates="entries")
+    site = relationship("Site")

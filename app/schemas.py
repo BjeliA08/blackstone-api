@@ -230,7 +230,31 @@ class AvailabilityPeriodPatch(BaseModel):
     status: Optional[AvailabilityStatus] = None
 
 
+class SiteShiftOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    site_id: uuid.UUID
+    site_slug: Optional[str] = None
+    site_name: Optional[str] = None
+    shift_name: str
+    sort_order: int
+    active: bool
+
+
+class SiteShiftCreate(BaseModel):
+    site_slug: str
+    shift_name: str
+    sort_order: int = 0
+
+
+class SiteShiftPatch(BaseModel):
+    shift_name: Optional[str] = None
+    sort_order: Optional[int] = None
+    active: Optional[bool] = None
+
+
 class AvailabilityEntryIn(BaseModel):
+    site_id: uuid.UUID
     date: date
     shift_name: str
     available: bool
@@ -277,5 +301,7 @@ class AvailabilitySummaryOperator(BaseModel):
 
 class AvailabilitySummaryCell(BaseModel):
     date: date
+    site_id: uuid.UUID
+    site_slug: Optional[str] = None
     shift_name: str
     available_operators: list[AvailabilitySummaryOperator] = []
