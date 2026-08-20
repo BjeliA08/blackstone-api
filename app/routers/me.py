@@ -1,17 +1,20 @@
 import uuid
 from datetime import date, datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (APIRouter, Depends, File, HTTPException, Query,
+                     UploadFile, status)
 from sqlalchemy.orm import Session, joinedload
 from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out, operator_has_overlap)
 from ..database import get_db
 from ..deps import get_current_operator
+from ..config import settings
 from ..identity import can_view_licence, licence_status, role_names
+from ..photos import purge_photo, signed_url, upload_photo
 from ..models import (Assignment, CheckIn, CheckInStatus, OnboardingStatus,
                       Operator, Shift, ShiftStatus)
 from ..schemas import (AssignmentOut, CheckInOut, HoursSummary, OperatorOut,
-                       ProfilePatch, ShiftOut)
+                       PhotoUrlOut, ProfilePatch, ShiftOut)
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -289,3 +292,42 @@ def patch_my_profile(
     db.commit()
     db.refresh(current)
     return serialize_operator(db, current, current)
+
+
+@router.post("/profile/photo", response_model=OperatorOut)
+async def upload_my_photo(
+    file: UploadFile = File(...),
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Own profile only — there is no endpoint for uploading someone else's face."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="No image was received")
+
+    previous = current.photo_key
+    current.photo_key = upload_photo(current.id, raw, file.content_type)
+
+    if (current.onboarding_status == OnboardingStatus.profile_pending
+            and current.profile_complete):
+        current.onboarding_status = OnboardingStatus.active
+        current.activated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    db.commit()
+    db.refresh(current)
+
+    # Replacing a photo should not leave the old face lying around.
+    if previous and previous != current.photo_key:
+        purge_photo(previous)
+
+    return serialize_operator(db, current, current)
+
+
+@router.get("/profile/photo-url", response_model=PhotoUrlOut)
+def my_photo_url(
+    current: Operator = Depends(get_current_operator),
+):
+    if not current.photo_key:
+        raise HTTPException(status_code=404, detail="No photo on file")
+    return PhotoUrlOut(url=signed_url(current.photo_key),
+                       expires_in=settings.PHOTO_URL_TTL_SECONDS)

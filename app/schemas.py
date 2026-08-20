@@ -451,3 +451,8 @@ class InviteCodeCreate(BaseModel):
     expires_in_days: Optional[int] = 14
     intended_role: Optional[str] = None
     intended_site_access: Optional[list[str]] = None
+
+
+class PhotoUrlOut(BaseModel):
+    url: str
+    expires_in: int

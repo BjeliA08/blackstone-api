@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
+    PHOTO_URL_TTL_SECONDS: int = 300
 
     model_config = {"env_file": ".env"}
 
