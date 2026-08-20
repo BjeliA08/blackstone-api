@@ -237,6 +237,8 @@ class SiteShiftOut(BaseModel):
     site_slug: Optional[str] = None
     site_name: Optional[str] = None
     shift_name: str
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
     sort_order: int
     active: bool
 
@@ -244,11 +246,16 @@ class SiteShiftOut(BaseModel):
 class SiteShiftCreate(BaseModel):
     site_slug: str
     shift_name: str
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
     sort_order: int = 0
 
 
 class SiteShiftPatch(BaseModel):
     shift_name: Optional[str] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    clear_times: bool = False
     sort_order: Optional[int] = None
     active: Optional[bool] = None
 

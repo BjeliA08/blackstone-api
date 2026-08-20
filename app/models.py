@@ -191,6 +191,8 @@ class SiteShift(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
     shift_name = Column(String, nullable=False)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

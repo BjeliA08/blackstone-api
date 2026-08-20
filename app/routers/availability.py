@@ -36,6 +36,8 @@ def _build_site_shift_out(ss: SiteShift) -> SiteShiftOut:
         site_slug=ss.site.slug if ss.site else None,
         site_name=ss.site.name if ss.site else None,
         shift_name=ss.shift_name,
+        start_time=ss.start_time,
+        end_time=ss.end_time,
         sort_order=ss.sort_order,
         active=ss.active,
     )
@@ -100,11 +102,14 @@ def create_site_shift(
             raise HTTPException(status_code=409, detail=f"{site.name} already has a '{name}' shift")
         existing.active = True
         existing.sort_order = body.sort_order
+        existing.start_time = body.start_time
+        existing.end_time = body.end_time
         db.commit()
         db.refresh(existing)
         return _build_site_shift_out(existing)
 
-    ss = SiteShift(site_id=site.id, shift_name=name, sort_order=body.sort_order)
+    ss = SiteShift(site_id=site.id, shift_name=name, sort_order=body.sort_order,
+                   start_time=body.start_time, end_time=body.end_time)
     db.add(ss)
     db.commit()
     db.refresh(ss)
@@ -126,6 +131,14 @@ def patch_site_shift(
         if not name:
             raise HTTPException(status_code=400, detail="Shift name cannot be empty")
         ss.shift_name = name
+    if body.clear_times:
+        ss.start_time = None
+        ss.end_time = None
+    else:
+        if body.start_time is not None:
+            ss.start_time = body.start_time
+        if body.end_time is not None:
+            ss.end_time = body.end_time
     if body.sort_order is not None:
         ss.sort_order = body.sort_order
     if body.active is not None:
