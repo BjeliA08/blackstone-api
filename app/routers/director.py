@@ -7,7 +7,8 @@ from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out)
 from ..auth import hash_password
 from ..database import get_db
-from ..deps import require_director
+from ..deps import get_current_operator, require_director
+from ..routers.me import serialize_operator
 from ..models import (Assignment, CheckIn, CheckInStatus, Operator,
                       OperatorRole, Shift, ShiftStatus, Site)
 from ..schemas import (AssignmentOut, CheckInStatusRow, HoursSummary,
@@ -206,3 +207,23 @@ def check_ins_today(
         ))
 
     return rows
+
+
+# ── Roster ────────────────────────────────────────────────────────────────────
+
+@router.get("/roster", response_model=list[OperatorOut])
+def roster(
+    include_inactive: bool = False,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """The company roster, straight from the database rather than the old
+    spreadsheet. Visible to any signed-in operator so people can see who they
+    work with; licence number and expiry are still stripped out for anyone
+    who is not Admin, a Director, or the operator themselves.
+    """
+    q = db.query(Operator)
+    if not include_inactive:
+        q = q.filter(Operator.active.is_(True))
+    ops = q.order_by(Operator.first_name, Operator.last_name).all()
+    return [serialize_operator(db, o, current) for o in ops]
