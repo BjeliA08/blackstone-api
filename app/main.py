@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import auth, me, director, admin, sos, availability, chat
+from .routers import auth, me, director, admin, sos, availability, chat, sites
 
 app = FastAPI(
     title="Blackstone Security API",
@@ -23,6 +23,7 @@ app.include_router(admin.router)
 app.include_router(sos.router)
 app.include_router(availability.router)
 app.include_router(chat.router)
+app.include_router(sites.router)
 
 
 @app.get("/health", tags=["health"])

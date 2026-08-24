@@ -52,6 +52,18 @@ class LicenceStatus(str, enum.Enum):
     missing = "missing"
 
 
+class SiteType(str, enum.Enum):
+    permanent = "permanent"
+    temporary = "temporary"
+
+
+class SiteStatus(str, enum.Enum):
+    active = "active"
+    upcoming = "upcoming"
+    ended = "ended"
+    archived = "archived"
+
+
 class ChatChannelType(str, enum.Enum):
     site = "site"
     site_leads = "site_leads"
@@ -115,7 +127,25 @@ class Site(Base):
     color = Column(String, nullable=False)
     active = Column(Boolean, nullable=False, default=True)
 
+    site_type = Column(SAEnum(SiteType), nullable=False, default=SiteType.permanent)
+    starts_on = Column(Date, nullable=True)
+    ends_on = Column(Date, nullable=True)
+    description = Column(String, nullable=True)
+    # Only ever written as 'archived'; every other value is derived on read.
+    status = Column(SAEnum(SiteStatus), nullable=False, default=SiteStatus.active)
+
     shifts = relationship("Shift", back_populates="site")
+
+    def effective_status(self, today) -> "SiteStatus":
+        """Derived from the dates so a site can never sit stale, except for
+        archived, which is a deliberate Admin decision."""
+        if self.status == SiteStatus.archived:
+            return SiteStatus.archived
+        if self.starts_on and today < self.starts_on:
+            return SiteStatus.upcoming
+        if self.ends_on and today > self.ends_on:
+            return SiteStatus.ended
+        return SiteStatus.active
 
 
 class Shift(Base):

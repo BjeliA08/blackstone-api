@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, LicenceStatus, OnboardingStatus,
-                     OperatorRole, ShiftStatus)
+                     OperatorRole, ShiftStatus, SiteStatus, SiteType)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -456,3 +456,31 @@ class InviteCodeCreate(BaseModel):
 class PhotoUrlOut(BaseModel):
     url: str
     expires_in: int
+
+
+# ── Site selection hub ────────────────────────────────────────────────────────
+
+class SiteSummary(BaseModel):
+    """What the selector needs to show where attention is required."""
+    on_post: int = 0            # operators currently checked in / assigned right now
+    posts_required: int = 0     # slots the current shift should have filled
+    open_contracts: int = 0     # unfilled slots from now onwards
+    urgent_contracts: int = 0   # unfilled slots starting within 24h
+    unread_messages: int = 0
+    current_shift_name: Optional[str] = None
+
+
+class SiteCardOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    slug: str
+    color: str
+    site_type: SiteType
+    status: SiteStatus
+    starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    days_remaining: Optional[int] = None
+    description: Optional[str] = None
+    slot_count: int
+    summary: SiteSummary = SiteSummary()
