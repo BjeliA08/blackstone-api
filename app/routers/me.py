@@ -1,20 +1,25 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Optional
 from fastapi import (APIRouter, Depends, File, HTTPException, Query,
                      UploadFile, status)
+from sqlalchemy import extract
 from sqlalchemy.orm import Session, joinedload
 from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out, operator_has_overlap)
 from ..database import get_db
 from ..deps import get_current_operator
-from ..clock import local_today, utc_now_naive
+from ..clock import local_now_naive, local_today, utc_now_naive
 from ..config import settings
 from ..identity import can_view_licence, licence_status, role_names
 from ..photos import purge_photo, signed_url, upload_photo
-from ..models import (Assignment, CheckIn, CheckInStatus, OnboardingStatus,
-                      Operator, Shift, ShiftStatus)
-from ..schemas import (AssignmentOut, CheckInOut, HoursSummary, OperatorOut,
+from ..models import (Assignment, AvailabilityPeriod, AvailabilityStatus,
+                      AvailabilitySubmission, CheckIn, CheckInStatus,
+                      LicenceStatus, OnboardingStatus, Operator, Shift,
+                      ShiftStatus)
+from ..schemas import (ActivityRowOut, AssignmentOut, CheckInOut,
+                       HistoryRowOut, HoursSummary, MeOverviewOut,
+                       NextShiftOut, OperatorOut, OutstandingAction,
                        PhotoUrlOut, ProfilePatch, ShiftOut)
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -332,3 +337,254 @@ def my_photo_url(
         raise HTTPException(status_code=404, detail="No photo on file")
     return PhotoUrlOut(url=signed_url(current.photo_key),
                        expires_in=settings.PHOTO_URL_TTL_SECONDS)
+
+
+# ── Personal operations ───────────────────────────────────────────────────────
+#
+# Everything below is scoped to the JWT's operator and takes no operator
+# parameter, so there is no route by which one person reaches another's record.
+
+HOURS_THRESHOLD = 160
+
+
+def _my_assignments(db: Session, operator_id):
+    return (
+        db.query(Assignment)
+        .join(Shift, Assignment.shift_id == Shift.id)
+        .filter(Assignment.operator_id == operator_id,
+                Shift.status == ShiftStatus.approved)
+        .options(joinedload(Assignment.shift).joinedload(Shift.site))
+    )
+
+
+def _activity_row(a: Assignment) -> ActivityRowOut:
+    site = a.shift.site
+    return ActivityRowOut(
+        kind="claimed" if a.accepted else "assigned",
+        date=a.shift.date,
+        site_slug=site.slug if site else "",
+        site_name=site.name if site else "Unknown",
+        site_color=site.color if site else "#666666",
+        shift_name=a.shift.shift_name,
+        start_time=a.start_time,
+        end_time=a.end_time,
+        accepted=a.accepted,
+    )
+
+
+def _outstanding_for(db: Session, op: Operator, today) -> list[OutstandingAction]:
+    """Everything this operator has left undone. The hub card leans on this,
+    so it is the mechanism by which someone finds out they forgot something."""
+    actions: list[OutstandingAction] = []
+
+    status = licence_status(op, today)
+    if status == LicenceStatus.expired:
+        actions.append(OutstandingAction(
+            kind="licence", severity="critical",
+            title="Security licence expired",
+            detail="Expired " + op.security_licence_expiry.strftime("%d %b %Y")
+                   + ". Speak to a Director.",
+            route="/me/profile",
+        ))
+    elif status == LicenceStatus.expiring_soon:
+        days = (op.security_licence_expiry - today).days
+        plural = "" if days == 1 else "s"
+        actions.append(OutstandingAction(
+            kind="licence", severity="caution",
+            title="Security licence expiring",
+            detail=str(days) + " day" + plural + " left, renew before "
+                   + op.security_licence_expiry.strftime("%d %b") + ".",
+            route="/me/profile",
+        ))
+    elif status == LicenceStatus.missing:
+        actions.append(OutstandingAction(
+            kind="licence", severity="caution",
+            title="No licence on file",
+            detail="Add your security licence number and expiry date.",
+            route="/me/profile",
+        ))
+
+    open_periods = (
+        db.query(AvailabilityPeriod)
+        .filter(AvailabilityPeriod.status == AvailabilityStatus.open)
+        .all()
+    )
+    for p in open_periods:
+        submitted = (
+            db.query(AvailabilitySubmission)
+            .filter(AvailabilitySubmission.operator_id == op.id,
+                    AvailabilitySubmission.period_id == p.id)
+            .first()
+        )
+        if submitted:
+            continue
+        label = datetime(p.year, p.month, 1).strftime("%B %Y")
+        days_left = (p.closes_at.date() - today).days
+        plural = "" if days_left == 1 else "s"
+        actions.append(OutstandingAction(
+            kind="availability",
+            severity="critical" if days_left <= 2 else "caution",
+            title="Availability not submitted for " + label,
+            detail=("Closes today." if days_left <= 0
+                    else "Closes in " + str(days_left) + " day" + plural + "."),
+            route="/me/availability",
+        ))
+
+    unaccepted = (
+        _my_assignments(db, op.id)
+        .filter(Shift.date >= today, Assignment.accepted.is_(False))
+        .count()
+    )
+    if unaccepted:
+        plural = "" if unaccepted == 1 else "s"
+        actions.append(OutstandingAction(
+            kind="unaccepted_shift", severity="caution",
+            title=str(unaccepted) + " shift" + plural + " not accepted",
+            detail="Confirm you are working these.",
+            route="/me/shifts",
+        ))
+
+    return actions
+
+
+@router.get("/overview", response_model=MeOverviewOut)
+def my_overview(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Answers 'what do I need to do' in one payload."""
+    today = local_today()
+    now = local_now_naive()
+    now_min = now.hour * 60 + now.minute
+
+    upcoming = (
+        _my_assignments(db, current.id)
+        .filter(Shift.date >= today)
+        .order_by(Shift.date, Assignment.start_time)
+        .all()
+    )
+
+    next_shift = None
+    for a in upcoming:
+        # A shift that already finished earlier today is not the next one.
+        if a.shift.date == today and a.start_time and a.end_time:
+            start_min = a.start_time.hour * 60 + a.start_time.minute
+            end_min = a.end_time.hour * 60 + a.end_time.minute
+            if end_min > start_min and end_min <= now_min:
+                continue
+        next_shift = a
+        break
+
+    next_out = None
+    if next_shift:
+        site = next_shift.shift.site
+        starts_at = datetime.combine(next_shift.shift.date,
+                                     next_shift.start_time or time(0, 0))
+        next_out = NextShiftOut(
+            assignment_id=next_shift.id,
+            site_slug=site.slug if site else "",
+            site_name=site.name if site else "Unknown",
+            site_color=site.color if site else "#666666",
+            date=next_shift.shift.date,
+            shift_name=next_shift.shift.shift_name,
+            start_time=next_shift.start_time,
+            end_time=next_shift.end_time,
+            position=next_shift.position,
+            accepted=next_shift.accepted,
+            hours_until=round((starts_at - now).total_seconds() / 3600, 1),
+        )
+
+    month_hours = hours_for_operator_month(db, current.id, today.month, today.year)
+    month_count = (
+        _my_assignments(db, current.id)
+        .filter(extract("month", Shift.date) == today.month,
+                extract("year", Shift.date) == today.year)
+        .count()
+    )
+
+    recent = (
+        _my_assignments(db, current.id)
+        .order_by(Shift.date.desc())
+        .limit(8)
+        .all()
+    )
+
+    return MeOverviewOut(
+        operator_id=current.id,
+        full_name=current.full_name,
+        has_photo=bool(current.photo_key),
+        next_shift=next_out,
+        month_hours=month_hours,
+        month_shift_count=month_count,
+        hours_threshold=HOURS_THRESHOLD,
+        outstanding=_outstanding_for(db, current, today),
+        recent_activity=[_activity_row(a) for a in recent],
+    )
+
+
+@router.get("/history", response_model=list[HistoryRowOut])
+def my_history(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """The operator's own check-in record — what was scheduled against what was
+    logged. Reported as recorded times, not scored."""
+    rows = (
+        db.query(CheckIn)
+        .join(Assignment, CheckIn.assignment_id == Assignment.id)
+        .join(Shift, Assignment.shift_id == Shift.id)
+        .filter(CheckIn.operator_id == current.id)
+        .options(joinedload(CheckIn.assignment)
+                 .joinedload(Assignment.shift)
+                 .joinedload(Shift.site))
+        .order_by(Shift.date.desc())
+        .offset(offset).limit(limit)
+        .all()
+    )
+
+    out: list[HistoryRowOut] = []
+    for ci in rows:
+        shift = ci.assignment.shift if ci.assignment else None
+        site = shift.site if shift else None
+        delta = None
+        if ci.actual_check_in and shift:
+            scheduled = datetime.combine(shift.date, ci.scheduled_start)
+            delta = int(round((ci.actual_check_in - scheduled).total_seconds() / 60))
+        out.append(HistoryRowOut(
+            check_in_id=ci.id,
+            date=shift.date if shift else local_today(),
+            site_name=site.name if site else "Unknown",
+            site_color=site.color if site else "#666666",
+            shift_name=shift.shift_name if shift else "",
+            scheduled_start=ci.scheduled_start,
+            scheduled_end=ci.scheduled_end,
+            actual_check_in=ci.actual_check_in,
+            actual_check_out=ci.actual_check_out,
+            status=ci.status,
+            notes=ci.notes,
+            start_delta_minutes=delta,
+        ))
+    return out
+
+
+@router.get("/activity", response_model=list[ActivityRowOut])
+def my_activity(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Shifts this operator claimed or was assigned, newest first.
+
+    Handoffs are absent because no handoff feature exists yet — there is no
+    model for offering a shift to another operator.
+    """
+    rows = (
+        _my_assignments(db, current.id)
+        .order_by(Shift.date.desc())
+        .offset(offset).limit(limit)
+        .all()
+    )
+    return [_activity_row(a) for a in rows]

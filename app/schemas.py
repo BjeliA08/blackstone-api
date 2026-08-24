@@ -488,3 +488,68 @@ class SiteCardOut(BaseModel):
     description: Optional[str] = None
     slot_count: int
     summary: SiteSummary = SiteSummary()
+
+
+# ── Personal operations ───────────────────────────────────────────────────────
+
+class NextShiftOut(BaseModel):
+    assignment_id: uuid.UUID
+    site_slug: str
+    site_name: str
+    site_color: str
+    date: date
+    shift_name: str
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    position: Optional[str] = None
+    accepted: bool
+    hours_until: Optional[float] = None
+
+
+class OutstandingAction(BaseModel):
+    """Something the operator has to do. Severity drives the indicator."""
+    kind: str                 # availability | licence | unaccepted_shift
+    severity: str             # critical | caution
+    title: str
+    detail: str
+    route: Optional[str] = None
+
+
+class ActivityRowOut(BaseModel):
+    kind: str                 # claimed | assigned
+    date: date
+    site_slug: str
+    site_name: str
+    site_color: str
+    shift_name: str
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    accepted: bool
+
+
+class HistoryRowOut(BaseModel):
+    check_in_id: uuid.UUID
+    date: date
+    site_name: str
+    site_color: str
+    shift_name: str
+    scheduled_start: time
+    scheduled_end: time
+    actual_check_in: Optional[datetime] = None
+    actual_check_out: Optional[datetime] = None
+    status: CheckInStatus
+    notes: Optional[str] = None
+    # Minutes relative to the scheduled start; negative means early.
+    start_delta_minutes: Optional[int] = None
+
+
+class MeOverviewOut(BaseModel):
+    operator_id: uuid.UUID
+    full_name: str
+    has_photo: bool
+    next_shift: Optional[NextShiftOut] = None
+    month_hours: float = 0.0
+    month_shift_count: int = 0
+    hours_threshold: int = 160
+    outstanding: list[OutstandingAction] = []
+    recent_activity: list[ActivityRowOut] = []
