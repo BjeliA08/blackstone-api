@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
     PHOTO_URL_TTL_SECONDS: int = 300
+    # How long a trusted device stays signed in before a full re-login.
+    DEVICE_TRUST_DAYS: int = 30
 
     model_config = {"env_file": ".env"}
 

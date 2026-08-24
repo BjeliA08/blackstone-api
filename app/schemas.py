@@ -13,6 +13,8 @@ from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
 class LoginRequest(BaseModel):
     phone_number: str
     password: str
+    # Keeps this device signed in until the trust window runs out.
+    remember_device: bool = False
 
 
 class SetPasswordRequest(BaseModel):
@@ -23,8 +25,10 @@ class SetPasswordRequest(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
-    refresh_token: str
+    # Only issued for a remembered device; absent otherwise.
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
+    device_trust_expires_at: Optional[datetime] = None
 
 
 class RefreshRequest(BaseModel):

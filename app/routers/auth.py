@@ -2,8 +2,11 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from jose import JWTError
 from sqlalchemy.orm import Session
-from ..auth import (create_access_token, create_refresh_token,
-                    decode_token, hash_password, verify_password)
+from datetime import datetime, timedelta, timezone
+from ..auth import (create_access_token, create_device_refresh_token,
+                    create_refresh_token, decode_refresh_token, decode_token,
+                    hash_password, verify_password)
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_operator
 from ..identity import find_usable_code
@@ -28,18 +31,31 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     sid = str(op.id)
+    if not body.remember_device:
+        # Not a trusted device: no refresh token at all, so the session simply
+        # ends when the access token does.
+        return TokenResponse(access_token=create_access_token(sid))
+
+    trust_until = datetime.now(timezone.utc) + timedelta(days=settings.DEVICE_TRUST_DAYS)
     return TokenResponse(
         access_token=create_access_token(sid),
-        refresh_token=create_refresh_token(sid),
+        refresh_token=create_device_refresh_token(sid, trust_until),
+        device_trust_expires_at=trust_until,
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
+    """Mint a fresh access token for a remembered device.
+
+    The device's original expiry rides along unchanged — refreshing extends the
+    session, never the trust window.
+    """
     try:
-        operator_id = decode_token(body.refresh_token, "refresh")
+        operator_id, device_expiry = decode_refresh_token(body.refresh_token)
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Sign in again on this device")
 
     import uuid
     op = db.get(Operator, uuid.UUID(operator_id))
@@ -47,9 +63,14 @@ def refresh(body: RefreshRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Operator not found")
 
     sid = str(op.id)
+    if device_expiry is None:
+        return TokenResponse(access_token=create_access_token(sid),
+                             refresh_token=create_refresh_token(sid))
+
     return TokenResponse(
         access_token=create_access_token(sid),
-        refresh_token=create_refresh_token(sid),
+        refresh_token=create_device_refresh_token(sid, device_expiry),
+        device_trust_expires_at=device_expiry,
     )
 
 
