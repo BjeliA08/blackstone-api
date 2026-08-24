@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     PHOTO_URL_TTL_SECONDS: int = 300
     # How long a trusted device stays signed in before a full re-login.
     DEVICE_TRUST_DAYS: int = 30
+    # Where the sites are. Shift times are wall-clock in this zone.
+    COMPANY_TIMEZONE: str = "America/Edmonton"
 
     model_config = {"env_file": ".env"}
 

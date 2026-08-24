@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out)
 from ..auth import hash_password
+from ..clock import local_today
 from ..database import get_db
 from ..deps import get_current_operator, require_director
 from ..routers.me import serialize_operator
@@ -163,7 +164,7 @@ def check_ins_today(
     _: Operator = Depends(require_director),
     db: Session = Depends(get_db),
 ):
-    today = datetime.now(timezone.utc).date()
+    today = local_today()
 
     assignments: list[Assignment] = (
         db.query(Assignment)

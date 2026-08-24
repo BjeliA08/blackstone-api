@@ -174,7 +174,8 @@ def is_missed_check_in(check_in: CheckIn) -> bool:
     """Shift started 30+ minutes ago with no actual check-in."""
     if check_in.actual_check_in or check_in.status != CheckInStatus.pending:
         return False
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from .clock import local_now_naive
+    now = local_now_naive()
     today = now.date()
     scheduled = datetime.combine(today, check_in.scheduled_start)
     return (now - scheduled).total_seconds() >= 30 * 60
@@ -184,7 +185,8 @@ def is_missed_check_out(check_in: CheckIn) -> bool:
     """Shift ended 60+ minutes ago with no check-out."""
     if check_in.actual_check_out or check_in.status == CheckInStatus.checked_out:
         return False
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from .clock import local_now_naive
+    now = local_now_naive()
     today = now.date()
     scheduled_end = datetime.combine(today, check_in.scheduled_end)
     # Overnight: if end < start, end is on the next day

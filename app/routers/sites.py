@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from .chat import _role_names
 from ..business import shift_window_minutes
+from ..clock import local_now_naive
 from ..database import get_db
 from ..deps import get_current_operator
 from ..models import (Assignment, ChatChannel, ChatMessage, ChatRead, Operator,
@@ -26,7 +27,8 @@ URGENT_WINDOW_HOURS = 24
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """Local wall-clock: shift windows are Edmonton time, not UTC."""
+    return local_now_naive()
 
 
 def _minutes_now(now: datetime) -> int:

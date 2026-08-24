@@ -8,6 +8,7 @@ from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out, operator_has_overlap)
 from ..database import get_db
 from ..deps import get_current_operator
+from ..clock import local_today, utc_now_naive
 from ..config import settings
 from ..identity import can_view_licence, licence_status, role_names
 from ..photos import purge_photo, signed_url, upload_photo
@@ -58,7 +59,7 @@ def my_shifts_today(
     current: Operator = Depends(get_current_operator),
     db: Session = Depends(get_db),
 ):
-    today = datetime.now(timezone.utc).date()
+    today = local_today()
     shifts = (
         db.query(Shift)
         .join(Assignment)
@@ -103,8 +104,8 @@ def check_in(
     current: Operator = Depends(get_current_operator),
     db: Session = Depends(get_db),
 ):
-    today = datetime.now(timezone.utc).date()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    today = local_today()
+    now = utc_now_naive()   # recorded instant, not a wall-clock comparison
 
     # Find the operator's assignment for today that hasn't been checked in yet
     assignment: Assignment | None = (
@@ -274,7 +275,7 @@ def patch_my_profile(
         current.security_licence_number = number
 
     if body.security_licence_expiry is not None:
-        today = datetime.now(timezone.utc).date()
+        today = local_today()
         if body.security_licence_expiry < today:
             raise HTTPException(
                 status_code=400,

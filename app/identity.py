@@ -13,6 +13,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from .clock import local_today
+
 from .models import (InviteCode, LicenceStatus, Operator, OperatorRole,
                      OperatorRoleAssignment, Role)
 
@@ -27,7 +29,7 @@ def licence_status(op: Operator, today: Optional[date] = None) -> LicenceStatus:
     """What a Director scanning the roster needs to know at a glance."""
     if not op.security_licence_expiry:
         return LicenceStatus.missing
-    today = today or datetime.now(timezone.utc).date()
+    today = today or local_today()
     days_left = (op.security_licence_expiry - today).days
     if days_left < 0:
         return LicenceStatus.expired
