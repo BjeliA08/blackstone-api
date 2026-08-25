@@ -5,11 +5,13 @@ from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import require_admin, require_director
 from ..identity import generate_code
+from ..routers.me import serialize_operator
 from ..models import (InviteCode, Operator, OperatorRoleAssignment, Role,
                       Site, SiteAccess)
 from ..schemas import (AssignRoleRequest, GrantSiteRequest, InviteCodeCreate,
-                       InviteCodeOut, OperatorWithRoles, OperatorRoleOut,
-                       RoleOut, SiteAccessOut)
+                       InviteCodeOut, OperatorOut, OperatorWithRoles,
+                       OperatorRoleOut, RatePatch, RoleOut, SiteAccessOut,
+                       SiteOut)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -47,6 +49,7 @@ def _build_operator_with_roles(op: Operator) -> OperatorWithRoles:
         active=op.active,
         roles=roles,
         site_accesses=accesses,
+        pay_rate=op.pay_rate,
     )
 
 
@@ -299,3 +302,39 @@ def revoke_invite_code(
     if row and not row.revoked:
         row.revoked = True
         db.commit()
+
+
+# ── Rates ─────────────────────────────────────────────────────────────────────
+# Admin-only. Changing a rate here never touches already-generated invoice
+# line items — those keep the rate that was in effect when they were made.
+
+@router.patch("/operators/{operator_id}/rate", response_model=OperatorOut)
+def set_operator_pay_rate(
+    operator_id: uuid.UUID,
+    body: RatePatch,
+    current: Operator = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    op = db.get(Operator, operator_id)
+    if not op:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    op.pay_rate = body.rate
+    db.commit()
+    db.refresh(op)
+    return serialize_operator(db, op, current)
+
+
+@router.patch("/sites/{site_id}/rate", response_model=SiteOut)
+def set_site_bill_rate(
+    site_id: uuid.UUID,
+    body: RatePatch,
+    _: Operator = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    site = db.get(Site, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    site.bill_rate = body.rate
+    db.commit()
+    db.refresh(site)
+    return site

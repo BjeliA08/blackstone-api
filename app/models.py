@@ -2,7 +2,8 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Date, DateTime, Enum as SAEnum,
-                        ForeignKey, Integer, JSON, String, Text, Time, UniqueConstraint)
+                        ForeignKey, Integer, JSON, Numeric, String, Text, Time,
+                        UniqueConstraint)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy import func
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -52,6 +53,13 @@ class LicenceStatus(str, enum.Enum):
     missing = "missing"
 
 
+class InvoiceStatus(str, enum.Enum):
+    draft = "draft"
+    submitted = "submitted"
+    approved = "approved"
+    paid = "paid"
+
+
 class SiteType(str, enum.Enum):
     permanent = "permanent"
     temporary = "temporary"
@@ -93,6 +101,12 @@ class Operator(Base):
     invited_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
     activated_at = Column(DateTime, nullable=True)
 
+    # Contractor invoicing — visible only to Admin, Director, and the operator
+    # themselves, same discipline as the licence fields above.
+    pay_rate = Column(Numeric(10, 2), nullable=True)
+    gst_number = Column(String, nullable=True)
+    gst_registered = Column(Boolean, nullable=False, default=False)
+
     @hybrid_property
     def full_name(self) -> str:
         """There are no nicknames or display names anywhere — an operator is
@@ -126,6 +140,9 @@ class Site(Base):
     slot_count = Column(Integer, nullable=False)
     color = Column(String, nullable=False)
     active = Column(Boolean, nullable=False, default=True)
+
+    # What the client is billed per hour at this site — Admin/Director only.
+    bill_rate = Column(Numeric(10, 2), nullable=True)
 
     site_type = Column(SAEnum(SiteType), nullable=False, default=SiteType.permanent)
     starts_on = Column(Date, nullable=True)
@@ -295,6 +312,55 @@ class SiteShift(Base):
             if override is not None:
                 return int(override)
         return default
+
+
+class Invoice(Base):
+    """One operator's claim for one month. Contractor invoicing only — no
+    tax remittance, no payroll, nothing beyond invoice status."""
+    __tablename__ = "invoices"
+    __table_args__ = (UniqueConstraint("operator_id", "period_month", "period_year",
+                                       name="uq_operator_period_invoice"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    period_month = Column(Integer, nullable=False)
+    period_year = Column(Integer, nullable=False)
+    status = Column(SAEnum(InvoiceStatus), nullable=False, default=InvoiceStatus.draft)
+
+    submitted_at = Column(DateTime, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    approved_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    paid_at = Column(DateTime, nullable=True)
+    marked_paid_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+
+    total_hours = Column(Numeric(10, 2), nullable=False, default=0)
+    total_amount = Column(Numeric(10, 2), nullable=False, default=0)
+    gst_amount = Column(Numeric(10, 2), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    operator = relationship("Operator", foreign_keys=[operator_id])
+    line_items = relationship("InvoiceLineItem", back_populates="invoice",
+                              cascade="all, delete-orphan", order_by="InvoiceLineItem.date")
+
+
+class InvoiceLineItem(Base):
+    """One worked shift on an invoice. `rate` is a snapshot of the operator's
+    pay_rate at generation time — a later rate change never touches it."""
+    __tablename__ = "invoice_line_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    invoice_id = Column(UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id"), nullable=False)
+    date = Column(Date, nullable=False)
+    shift_name = Column(String, nullable=False)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
+    hours = Column(Numeric(10, 2), nullable=False)
+    rate = Column(Numeric(10, 2), nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+
+    invoice = relationship("Invoice", back_populates="line_items")
+    site = relationship("Site")
 
 
 class AvailabilityEntry(Base):

@@ -1,5 +1,6 @@
 import uuid
 from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from typing import Optional
 from fastapi import (APIRouter, Depends, File, HTTPException, Query,
                      UploadFile, status)
@@ -12,15 +13,17 @@ from ..deps import get_current_operator
 from ..clock import local_now_naive, local_today, utc_now_naive
 from ..config import settings
 from ..identity import can_view_licence, licence_status, role_names
+from ..invoicing import build_line_items
 from ..photos import purge_photo, signed_url, upload_photo
 from ..models import (Assignment, AvailabilityPeriod, AvailabilityStatus,
-                      AvailabilitySubmission, CheckIn, CheckInStatus,
-                      LicenceStatus, OnboardingStatus, Operator, Shift,
-                      ShiftStatus)
+                      AvailabilitySubmission, CheckIn, CheckInStatus, Invoice,
+                      InvoiceLineItem, InvoiceStatus, LicenceStatus,
+                      OnboardingStatus, Operator, Shift, ShiftStatus)
 from ..schemas import (ActivityRowOut, AssignmentOut, CheckInOut,
-                       HistoryRowOut, HoursSummary, MeOverviewOut,
-                       NextShiftOut, OperatorOut, OutstandingAction,
-                       PhotoUrlOut, ProfilePatch, ShiftOut)
+                       HistoryRowOut, HoursSummary, InvoiceDetailOut,
+                       InvoiceOut, InvoicePreviewOut, InvoiceLineItemOut,
+                       MeOverviewOut, NextShiftOut, OperatorOut,
+                       OutstandingAction, PhotoUrlOut, ProfilePatch, ShiftOut)
 
 router = APIRouter(prefix="/me", tags=["me"])
 
@@ -254,6 +257,7 @@ def serialize_operator(db, target: Operator, viewer: Operator) -> OperatorOut:
         security_licence_number=target.security_licence_number if show_licence else None,
         security_licence_expiry=target.security_licence_expiry if show_licence else None,
         licence_status=licence_status(target) if show_licence else None,
+        pay_rate=target.pay_rate if show_licence else None,
     )
 
 
@@ -588,3 +592,137 @@ def my_activity(
         .all()
     )
     return [_activity_row(a) for a in rows]
+
+
+# ── Invoices (self-scoped) ───────────────────────────────────────────────────
+
+def _parse_period(period: str) -> tuple[int, int]:
+    try:
+        year_s, month_s = period.split("-")
+        year, month = int(year_s), int(month_s)
+        if not (1 <= month <= 12):
+            raise ValueError
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Period must be formatted YYYY-MM")
+    return month, year
+
+
+def _build_line_item_out(li: InvoiceLineItem) -> InvoiceLineItemOut:
+    return InvoiceLineItemOut(
+        id=li.id, site_id=li.site_id,
+        site_name=li.site.name if li.site else None,
+        site_slug=li.site.slug if li.site else None,
+        date=li.date, shift_name=li.shift_name,
+        start_time=li.start_time, end_time=li.end_time,
+        hours=li.hours, rate=li.rate, amount=li.amount,
+    )
+
+
+def build_invoice_detail(inv: Invoice) -> InvoiceDetailOut:
+    return InvoiceDetailOut(
+        id=inv.id, operator_id=inv.operator_id,
+        operator_name=inv.operator.full_name if inv.operator else None,
+        period_month=inv.period_month, period_year=inv.period_year,
+        status=inv.status, submitted_at=inv.submitted_at,
+        approved_at=inv.approved_at, approved_by=inv.approved_by,
+        paid_at=inv.paid_at, marked_paid_by=inv.marked_paid_by,
+        total_hours=inv.total_hours, total_amount=inv.total_amount,
+        gst_amount=inv.gst_amount, created_at=inv.created_at,
+        line_items=[_build_line_item_out(li) for li in inv.line_items],
+    )
+
+
+@router.get("/invoices", response_model=list[InvoiceOut])
+def my_invoices(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(Invoice)
+        .filter(Invoice.operator_id == current.id)
+        .order_by(Invoice.period_year.desc(), Invoice.period_month.desc())
+        .all()
+    )
+    return [InvoiceOut.model_validate(i) for i in rows]
+
+
+@router.get("/invoices/{period}/preview", response_model=InvoicePreviewOut)
+def preview_invoice(
+    period: str,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Ephemeral — nothing is written until /submit. Safe to call repeatedly
+    while the period is still open."""
+    month, year = _parse_period(period)
+    existing = (
+        db.query(Invoice)
+        .filter(Invoice.operator_id == current.id,
+                Invoice.period_month == month, Invoice.period_year == year)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409,
+                           detail=f"An invoice for {period} was already {existing.status.value}")
+    if current.pay_rate is None:
+        raise HTTPException(status_code=400, detail="No pay rate is on file for you yet — ask a Director.")
+
+    items = build_line_items(db, current, month, year)
+    total_hours = sum((i.hours for i in items), Decimal("0"))
+    total_amount = sum((i.amount for i in items), Decimal("0"))
+    return InvoicePreviewOut(
+        period_month=month, period_year=year,
+        total_hours=total_hours, total_amount=total_amount,
+        line_items=[InvoiceLineItemOut(
+            id=uuid.uuid4(), site_id=i.site.id,
+            site_name=i.site.name if i.site else None,
+            site_slug=i.site.slug if i.site else None,
+            date=i.date, shift_name=i.shift_name,
+            start_time=i.start_time, end_time=i.end_time,
+            hours=i.hours, rate=i.rate, amount=i.amount,
+        ) for i in items],
+    )
+
+
+@router.post("/invoices/{period}/submit", response_model=InvoiceDetailOut, status_code=201)
+def submit_invoice(
+    period: str,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    month, year = _parse_period(period)
+    existing = (
+        db.query(Invoice)
+        .filter(Invoice.operator_id == current.id,
+                Invoice.period_month == month, Invoice.period_year == year)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409,
+                           detail=f"An invoice for {period} was already {existing.status.value}")
+    if current.pay_rate is None:
+        raise HTTPException(status_code=400, detail="No pay rate is on file for you yet — ask a Director.")
+
+    items = build_line_items(db, current, month, year)
+    if not items:
+        raise HTTPException(status_code=400, detail=f"No worked shifts found for {period}")
+
+    total_hours = sum((i.hours for i in items), Decimal("0"))
+    total_amount = sum((i.amount for i in items), Decimal("0"))
+
+    invoice = Invoice(
+        operator_id=current.id, period_month=month, period_year=year,
+        status=InvoiceStatus.submitted, submitted_at=utc_now_naive(),
+        total_hours=total_hours, total_amount=total_amount,
+    )
+    db.add(invoice)
+    db.flush()
+    for i in items:
+        db.add(InvoiceLineItem(
+            invoice_id=invoice.id, site_id=i.site.id, date=i.date,
+            shift_name=i.shift_name, start_time=i.start_time, end_time=i.end_time,
+            hours=i.hours, rate=i.rate, amount=i.amount,
+        ))
+    db.commit()
+    db.refresh(invoice)
+    return build_invoice_detail(invoice)

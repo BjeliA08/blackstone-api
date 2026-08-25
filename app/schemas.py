@@ -3,8 +3,9 @@ import uuid
 from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel, ConfigDict
+from decimal import Decimal
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
-                     CoverageType, LicenceStatus, OnboardingStatus,
+                     CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
                      OperatorRole, ShiftStatus, SiteStatus, SiteType)
 
 
@@ -58,6 +59,8 @@ class OperatorOut(BaseModel):
     security_licence_number: Optional[str] = None
     security_licence_expiry: Optional[date] = None
     licence_status: Optional[LicenceStatus] = None
+    # Contractor pay rate — same visibility rule as the licence fields above.
+    pay_rate: Optional[Decimal] = None
 
 
 class OperatorCreate(BaseModel):
@@ -86,6 +89,12 @@ class SiteOut(BaseModel):
     slot_count: int
     color: str
     active: bool
+    # Admin/Director only — never sent on the operator-facing site card.
+    bill_rate: Optional[Decimal] = None
+
+
+class RatePatch(BaseModel):
+    rate: Optional[Decimal] = None
 
 
 # ── Assignment ────────────────────────────────────────────────────────────────
@@ -209,6 +218,8 @@ class OperatorWithRoles(BaseModel):
     active: bool
     roles: list[OperatorRoleOut] = []
     site_accesses: list[SiteAccessOut] = []
+    # This listing is admin-only already, so the rate is safe to include.
+    pay_rate: Optional[Decimal] = None
 
 
 class AssignRoleRequest(BaseModel):
@@ -559,3 +570,79 @@ class MeOverviewOut(BaseModel):
     hours_threshold: int = 160
     outstanding: list[OutstandingAction] = []
     recent_activity: list[ActivityRowOut] = []
+
+
+# ── Invoicing ─────────────────────────────────────────────────────────────────
+# Contractor invoicing and margin visibility only — no tax remittance, no
+# payroll. Line item rate is a snapshot; changing pay_rate/bill_rate later
+# never touches an already-generated line item.
+
+class InvoiceLineItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    site_id: uuid.UUID
+    site_name: Optional[str] = None
+    site_slug: Optional[str] = None
+    date: date
+    shift_name: str
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    hours: Decimal
+    rate: Decimal
+    amount: Decimal
+
+
+class InvoiceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operator_id: uuid.UUID
+    operator_name: Optional[str] = None
+    period_month: int
+    period_year: int
+    status: InvoiceStatus
+    submitted_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[uuid.UUID] = None
+    paid_at: Optional[datetime] = None
+    marked_paid_by: Optional[uuid.UUID] = None
+    total_hours: Decimal
+    total_amount: Decimal
+    gst_amount: Optional[Decimal] = None
+    created_at: datetime
+
+
+class InvoiceDetailOut(InvoiceOut):
+    line_items: list[InvoiceLineItemOut] = []
+
+
+class InvoicePreviewOut(BaseModel):
+    """Not persisted — a projection of what submitting would create."""
+    period_month: int
+    period_year: int
+    total_hours: Decimal
+    total_amount: Decimal
+    line_items: list[InvoiceLineItemOut] = []
+
+
+class SiteFinancialOut(BaseModel):
+    site_id: uuid.UUID
+    site_name: str
+    site_slug: str
+    period_month: int
+    period_year: int
+    billable_hours: Decimal
+    bill_amount: Decimal
+    pay_amount: Decimal
+    margin: Decimal
+
+
+class CoverageVarianceOut(BaseModel):
+    site_id: uuid.UUID
+    site_name: str
+    site_slug: str
+    period_month: int
+    period_year: int
+    scheduled_hours: Decimal
+    actual_hours: Decimal
+    variance_hours: Decimal
+    variance_pct: Optional[Decimal] = None
