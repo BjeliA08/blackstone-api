@@ -492,6 +492,28 @@ class EmergencyCode(Base):
     division = relationship("Division")
 
 
+class RecordExport(Base):
+    """A generated Site Records PDF. Exports are immutable once created —
+    the underlying data can drift (an hour corrected, an invoice
+    reclassified) so a legal or insurance document must reflect exactly
+    what was true when it was generated, never regenerated in place."""
+    __tablename__ = "record_exports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    generated_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    generated_at = Column(DateTime, default=datetime.utcnow)
+    period_start = Column(Date, nullable=False)
+    period_end = Column(Date, nullable=False)
+    sections_included = Column(ARRAY(String), nullable=False)
+    file_key = Column(String, nullable=False)
+    purpose = Column(Text, nullable=True)
+    include_rates = Column(Boolean, nullable=False, default=False)
+
+    site = relationship("Site")
+    generated_by_operator = relationship("Operator")
+
+
 class ClientProfile(Base):
     """Entirely separate from the internal operator profile — no real name,
     licence number, or pay rate ever lives here. The operator fully controls

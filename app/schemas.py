@@ -864,3 +864,100 @@ class RosterPackageOut(BaseModel):
     ends_at: Optional[datetime] = None
     location: str
     members: list[RosterPackageMember] = []
+
+
+# ── Site Records ─────────────────────────────────────────────────────────────
+# Director/Admin only, enforced server-side, no exceptions. Primarily an
+# aggregation over data that already exists elsewhere.
+
+class RecordAssignmentOut(BaseModel):
+    operator_id: Optional[uuid.UUID] = None
+    operator_name: Optional[str] = None
+    position: Optional[str] = None
+    start_time: Optional[time] = None
+    end_time: Optional[time] = None
+    accepted: bool = False
+
+
+class RecordShiftOut(BaseModel):
+    date: date
+    shift_name: str
+    slots_total: int
+    slots_filled: int
+    assignments: list[RecordAssignmentOut] = []
+
+
+class RecordCheckInOut(BaseModel):
+    date: date
+    shift_name: str
+    operator_name: str
+    scheduled_start: time
+    scheduled_end: time
+    actual_check_in: Optional[datetime] = None
+    actual_check_out: Optional[datetime] = None
+    status: CheckInStatus
+    late_in_minutes: Optional[int] = None
+    late_out_minutes: Optional[int] = None
+    notes: Optional[str] = None
+    # Check-in doesn't capture location today — always False, stated plainly
+    # rather than implying verification that never happened.
+    gps_captured: bool = False
+
+
+class RecordInvoiceOut(BaseModel):
+    operator_name: str
+    period_month: int
+    period_year: int
+    status: InvoiceStatus
+    site_hours: float
+    # Present only when the export/view explicitly includes rate detail.
+    site_amount: Optional[float] = None
+
+
+class RecordIncidentOut(BaseModel):
+    date: date
+    incident_type: str
+    operator_name: Optional[str] = None
+    summary: str
+
+
+class RecordComplianceOut(BaseModel):
+    operator_name: str
+    licence_status: LicenceStatus
+    licence_expiry: Optional[date] = None
+
+
+class SiteRecordsOut(BaseModel):
+    site_id: uuid.UUID
+    site_name: str
+    site_slug: str
+    period_start: date
+    period_end: date
+    include_rates: bool
+    shifts: list[RecordShiftOut] = []
+    check_ins: list[RecordCheckInOut] = []
+    invoices: list[RecordInvoiceOut] = []
+    incidents: list[RecordIncidentOut] = []
+    compliance: list[RecordComplianceOut] = []
+
+
+class RecordExportRequest(BaseModel):
+    period_start: date
+    period_end: date
+    sections: list[str]
+    purpose: Optional[str] = None
+    include_rates: bool = False
+
+
+class RecordExportOut(BaseModel):
+    id: uuid.UUID
+    site_id: uuid.UUID
+    generated_by: Optional[uuid.UUID] = None
+    generated_by_name: Optional[str] = None
+    generated_at: datetime
+    period_start: date
+    period_end: date
+    sections_included: list[str]
+    purpose: Optional[str] = None
+    include_rates: bool
+    download_url: Optional[str] = None

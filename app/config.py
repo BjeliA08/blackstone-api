@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     DEVICE_TRUST_DAYS: int = 30
     # Where the sites are. Shift times are wall-clock in this zone.
     COMPANY_TIMEZONE: str = "America/Edmonton"
+    # Optional — the Incidents & SOS section of Site Records reads from the
+    # same SOS Google Sheet the desktop app uses. Left blank, that section is
+    # simply empty rather than the whole export failing.
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: str = ""
+    GOOGLE_PRIVATE_KEY: str = ""
+    SOS_SHEET_ID: str = ""
+    RECORD_EXPORT_URL_TTL_SECONDS: int = 600
 
     model_config = {"env_file": ".env"}
 
