@@ -288,6 +288,21 @@ def patch_operation(
     return _build_operation_out(op_row, True)
 
 
+@router.delete("/operations/{operation_id}", status_code=204)
+def delete_operation(
+    operation_id: uuid.UUID,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    """Hard delete — an operation is a plan, not a payroll record, so unlike
+    invoices or roster removals there's nothing here worth keeping around
+    once it's gone. Cascades to its roles, venues, vehicles and chat."""
+    op_row = db.get(Operation, operation_id)
+    if op_row:
+        db.delete(op_row)
+        db.commit()
+
+
 @router.post("/operations/{operation_id}/roles", response_model=OperationRoleOut, status_code=201)
 def add_operation_role(
     operation_id: uuid.UUID,
@@ -344,6 +359,25 @@ def patch_operation_role(
         operator_name=role.operator.full_name if role.operator else None,
         confirmed=role.confirmed,
     )
+
+
+@router.delete("/operations/{operation_id}/roles/{role_id}", status_code=204)
+def delete_operation_role(
+    operation_id: uuid.UUID,
+    role_id: uuid.UUID,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    """Removes the role slot entirely — unlike unassigning, which just frees
+    the operator and leaves the slot open."""
+    role = (
+        db.query(OperationRole)
+        .filter(OperationRole.id == role_id, OperationRole.operation_id == operation_id)
+        .first()
+    )
+    if role:
+        db.delete(role)
+        db.commit()
 
 
 def _venue_or_404(db: Session, operation_id: uuid.UUID, venue_id: uuid.UUID) -> OperationVenue:
