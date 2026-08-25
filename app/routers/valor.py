@@ -19,13 +19,19 @@ from ..clock import utc_now_naive
 from ..database import get_db
 from ..deps import get_current_operator, require_valor_director
 from ..identity import role_names
-from ..models import (ClientProfile, Division, DivisionOperator, Operation,
-                      OperationRole, OperationStatus, Operator)
+from ..models import (ChatChannel, ChatChannelType, ClientProfile, Division,
+                      DivisionOperator, EmergencyCode, Operation,
+                      OperationRole, OperationStatus, OperationVehicle,
+                      OperationVenue, Operator)
 from ..photos import signed_url
 from ..schemas import (ClientProfileOut, DivisionOperatorCreate,
-                       DivisionOperatorOut, OperationCreate, OperationOut,
+                       DivisionOperatorOut, EmergencyCodeCreate, EmergencyCodeOut,
+                       EmergencyCodePatch, OperationCreate, OperationOut,
                        OperationPatch, OperationRoleCreate, OperationRoleOut,
-                       OperationRolePatch, RosterPackageMember, RosterPackageOut)
+                       OperationRolePatch, OperationVehicleCreate,
+                       OperationVehicleOut, OperationVehiclePatch,
+                       OperationVenueCreate, OperationVenueOut,
+                       OperationVenuePatch, RosterPackageMember, RosterPackageOut)
 
 router = APIRouter(prefix="/valor", tags=["valor"])
 
@@ -79,6 +85,14 @@ def _build_operation_out(op_row: Operation, include_threat_notes: bool) -> Opera
             operator_name=r.operator.full_name if r.operator else None,
             confirmed=r.confirmed,
         ) for r in op_row.roles],
+        venues=[OperationVenueOut.model_validate(v) for v in op_row.venues],
+        vehicles=[OperationVehicleOut(
+            id=v.id, operation_id=v.operation_id, vehicle_type=v.vehicle_type,
+            plate=v.plate, assigned_operator_id=v.assigned_operator_id,
+            assigned_operator_name=v.assigned_operator.full_name if v.assigned_operator else None,
+            notes=v.notes, sort_order=v.sort_order,
+        ) for v in op_row.vehicles],
+        chat_channel_slug=op_row.chat_channel.slug if op_row.chat_channel else None,
     )
 
 
@@ -236,6 +250,19 @@ def create_operation(
     db.add(op_row)
     db.commit()
     db.refresh(op_row)
+
+    # Every operation gets its own comms channel automatically — nobody has
+    # to remember to set one up before a team needs to talk.
+    channel = ChatChannel(
+        slug=f"valor-op-{op_row.id}",
+        name=f"{op_row.client_name} — {op_row.operation_name}",
+        channel_type=ChatChannelType.operation,
+        operation_id=op_row.id,
+        created_at=utc_now_naive(),
+    )
+    db.add(channel)
+    db.commit()
+    db.refresh(op_row)
     return _build_operation_out(op_row, True)
 
 
@@ -254,6 +281,8 @@ def patch_operation(
         value = getattr(body, field)
         if value is not None:
             setattr(op_row, field, value)
+    if (body.client_name is not None or body.operation_name is not None) and op_row.chat_channel:
+        op_row.chat_channel.name = f"{op_row.client_name} — {op_row.operation_name}"
     db.commit()
     db.refresh(op_row)
     return _build_operation_out(op_row, True)
@@ -315,6 +344,207 @@ def patch_operation_role(
         operator_name=role.operator.full_name if role.operator else None,
         confirmed=role.confirmed,
     )
+
+
+def _venue_or_404(db: Session, operation_id: uuid.UUID, venue_id: uuid.UUID) -> OperationVenue:
+    v = (
+        db.query(OperationVenue)
+        .filter(OperationVenue.id == venue_id, OperationVenue.operation_id == operation_id)
+        .first()
+    )
+    if not v:
+        raise HTTPException(status_code=404, detail="Venue not found")
+    return v
+
+
+def _vehicle_or_404(db: Session, operation_id: uuid.UUID, vehicle_id: uuid.UUID) -> OperationVehicle:
+    v = (
+        db.query(OperationVehicle)
+        .filter(OperationVehicle.id == vehicle_id, OperationVehicle.operation_id == operation_id)
+        .first()
+    )
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    return v
+
+
+def _build_vehicle_out(v: OperationVehicle) -> OperationVehicleOut:
+    return OperationVehicleOut(
+        id=v.id, operation_id=v.operation_id, vehicle_type=v.vehicle_type,
+        plate=v.plate, assigned_operator_id=v.assigned_operator_id,
+        assigned_operator_name=v.assigned_operator.full_name if v.assigned_operator else None,
+        notes=v.notes, sort_order=v.sort_order,
+    )
+
+
+@router.post("/operations/{operation_id}/venues", response_model=OperationVenueOut, status_code=201)
+def add_venue(
+    operation_id: uuid.UUID,
+    body: OperationVenueCreate,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    if not db.get(Operation, operation_id):
+        raise HTTPException(status_code=404, detail="Operation not found")
+    count = db.query(OperationVenue).filter(OperationVenue.operation_id == operation_id).count()
+    venue = OperationVenue(operation_id=operation_id, sort_order=count, **body.model_dump())
+    db.add(venue)
+    db.commit()
+    db.refresh(venue)
+    return OperationVenueOut.model_validate(venue)
+
+
+@router.patch("/operations/{operation_id}/venues/{venue_id}", response_model=OperationVenueOut)
+def patch_venue(
+    operation_id: uuid.UUID,
+    venue_id: uuid.UUID,
+    body: OperationVenuePatch,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    venue = _venue_or_404(db, operation_id, venue_id)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(venue, field, value)
+    db.commit()
+    db.refresh(venue)
+    return OperationVenueOut.model_validate(venue)
+
+
+@router.delete("/operations/{operation_id}/venues/{venue_id}", status_code=204)
+def delete_venue(
+    operation_id: uuid.UUID,
+    venue_id: uuid.UUID,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    venue = _venue_or_404(db, operation_id, venue_id)
+    db.delete(venue)
+    db.commit()
+
+
+@router.post("/operations/{operation_id}/vehicles", response_model=OperationVehicleOut, status_code=201)
+def add_vehicle(
+    operation_id: uuid.UUID,
+    body: OperationVehicleCreate,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    division = _division(db)
+    if not db.get(Operation, operation_id):
+        raise HTTPException(status_code=404, detail="Operation not found")
+    if body.assigned_operator_id and not is_division_member(db, body.assigned_operator_id, division.id):
+        raise HTTPException(status_code=400,
+                           detail="That operator is not on the Valor Collective roster")
+    count = db.query(OperationVehicle).filter(OperationVehicle.operation_id == operation_id).count()
+    vehicle = OperationVehicle(operation_id=operation_id, sort_order=count, **body.model_dump())
+    db.add(vehicle)
+    db.commit()
+    db.refresh(vehicle)
+    return _build_vehicle_out(vehicle)
+
+
+@router.patch("/operations/{operation_id}/vehicles/{vehicle_id}", response_model=OperationVehicleOut)
+def patch_vehicle(
+    operation_id: uuid.UUID,
+    vehicle_id: uuid.UUID,
+    body: OperationVehiclePatch,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    vehicle = _vehicle_or_404(db, operation_id, vehicle_id)
+    data = body.model_dump(exclude_unset=True, exclude={"unassign"})
+    if body.unassign:
+        vehicle.assigned_operator_id = None
+        data.pop("assigned_operator_id", None)
+    for field, value in data.items():
+        setattr(vehicle, field, value)
+    db.commit()
+    db.refresh(vehicle)
+    return _build_vehicle_out(vehicle)
+
+
+@router.delete("/operations/{operation_id}/vehicles/{vehicle_id}", status_code=204)
+def delete_vehicle(
+    operation_id: uuid.UUID,
+    vehicle_id: uuid.UUID,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    vehicle = _vehicle_or_404(db, operation_id, vehicle_id)
+    db.delete(vehicle)
+    db.commit()
+
+
+# ── Emergency codes (division-wide reference) ────────────────────────────────
+
+@router.get("/emergency-codes", response_model=list[EmergencyCodeOut])
+def list_emergency_codes(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """A code means the same thing on every engagement — readable by anyone
+    with division access, not just planners."""
+    division = _division(db)
+    _require_access(db, current, division)
+    rows = (
+        db.query(EmergencyCode)
+        .filter(EmergencyCode.division_id == division.id, EmergencyCode.active.is_(True))
+        .order_by(EmergencyCode.sort_order, EmergencyCode.code)
+        .all()
+    )
+    return [EmergencyCodeOut.model_validate(c) for c in rows]
+
+
+@router.post("/emergency-codes", response_model=EmergencyCodeOut, status_code=201)
+def create_emergency_code(
+    body: EmergencyCodeCreate,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    division = _division(db)
+    existing = (
+        db.query(EmergencyCode)
+        .filter(EmergencyCode.division_id == division.id, EmergencyCode.code == body.code)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Code '{body.code}' already exists")
+    code = EmergencyCode(division_id=division.id, **body.model_dump())
+    db.add(code)
+    db.commit()
+    db.refresh(code)
+    return EmergencyCodeOut.model_validate(code)
+
+
+@router.patch("/emergency-codes/{code_id}", response_model=EmergencyCodeOut)
+def patch_emergency_code(
+    code_id: uuid.UUID,
+    body: EmergencyCodePatch,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    code = db.get(EmergencyCode, code_id)
+    if not code:
+        raise HTTPException(status_code=404, detail="Emergency code not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(code, field, value)
+    db.commit()
+    db.refresh(code)
+    return EmergencyCodeOut.model_validate(code)
+
+
+@router.delete("/emergency-codes/{code_id}", status_code=204)
+def delete_emergency_code(
+    code_id: uuid.UUID,
+    _: Operator = Depends(require_valor_director),
+    db: Session = Depends(get_db),
+):
+    """Retired rather than hard-deleted, so a code referenced in old briefings
+    stays meaningful in history."""
+    code = db.get(EmergencyCode, code_id)
+    if code:
+        code.active = False
+        db.commit()
 
 
 @router.get("/client-profiles", response_model=list[ClientProfileOut])

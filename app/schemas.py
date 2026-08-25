@@ -698,6 +698,88 @@ class OperationRolePatch(BaseModel):
     confirmed: Optional[bool] = None
 
 
+class OperationVenueOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operation_id: uuid.UUID
+    name: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    notes: Optional[str] = None
+    sort_order: int
+
+
+class OperationVenueCreate(BaseModel):
+    name: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class OperationVenuePatch(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class OperationVehicleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operation_id: uuid.UUID
+    vehicle_type: str
+    plate: Optional[str] = None
+    assigned_operator_id: Optional[uuid.UUID] = None
+    assigned_operator_name: Optional[str] = None
+    notes: Optional[str] = None
+    sort_order: int
+
+
+class OperationVehicleCreate(BaseModel):
+    vehicle_type: str
+    plate: Optional[str] = None
+    assigned_operator_id: Optional[uuid.UUID] = None
+    notes: Optional[str] = None
+
+
+class OperationVehiclePatch(BaseModel):
+    vehicle_type: Optional[str] = None
+    plate: Optional[str] = None
+    assigned_operator_id: Optional[uuid.UUID] = None
+    unassign: bool = False
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class EmergencyCodeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    meaning: str
+    response: str
+    sort_order: int
+    active: bool
+
+
+class EmergencyCodeCreate(BaseModel):
+    code: str
+    meaning: str
+    response: str
+    sort_order: int = 0
+
+
+class EmergencyCodePatch(BaseModel):
+    code: Optional[str] = None
+    meaning: Optional[str] = None
+    response: Optional[str] = None
+    sort_order: Optional[int] = None
+    active: Optional[bool] = None
+
+
 class OperationOut(BaseModel):
     id: uuid.UUID
     division_id: uuid.UUID
@@ -713,6 +795,11 @@ class OperationOut(BaseModel):
     created_by: Optional[uuid.UUID] = None
     created_at: datetime
     roles: list[OperationRoleOut] = []
+    venues: list[OperationVenueOut] = []
+    vehicles: list[OperationVehicleOut] = []
+    # The per-operation chat channel's slug, so the frontend can drop
+    # straight into the existing generic Chat component.
+    chat_channel_slug: Optional[str] = None
 
 
 class OperationCreate(BaseModel):

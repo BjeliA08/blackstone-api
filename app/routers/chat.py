@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import get_current_operator
 from ..models import (ChatChannel, ChatChannelType, ChatMessage, ChatRead,
-                      Operator, OperatorRole, OperatorRoleAssignment, Role,
-                      SiteAccess)
+                      OperationRole, Operator, OperatorRole,
+                      OperatorRoleAssignment, Role, SiteAccess)
 from ..schemas import (ChatChannelOut, ChatMessageCreate, ChatMessageOut,
                        ChatReadResult)
 
@@ -30,9 +30,10 @@ MAX_BODY_CHARS = 4000
 # Sites first, then the narrowing group channels.
 _TYPE_ORDER = {
     ChatChannelType.site: 0,
-    ChatChannelType.site_leads: 1,
-    ChatChannelType.directors: 2,
-    ChatChannelType.admin: 3,
+    ChatChannelType.operation: 1,
+    ChatChannelType.site_leads: 2,
+    ChatChannelType.directors: 3,
+    ChatChannelType.admin: 4,
 }
 
 
@@ -57,7 +58,8 @@ def _role_names(db: Session, op: Operator) -> set[str]:
     return names
 
 
-def _can_access(channel: ChatChannel, roles: set[str], site_ids: set[uuid.UUID]) -> bool:
+def _can_access(channel: ChatChannel, roles: set[str], site_ids: set[uuid.UUID],
+                operation_ids: set[uuid.UUID]) -> bool:
     if "admin" in roles:
         return True  # Admin sees every channel, by design.
     if channel.channel_type == ChatChannelType.site:
@@ -68,7 +70,21 @@ def _can_access(channel: ChatChannel, roles: set[str], site_ids: set[uuid.UUID])
         return "director" in roles
     if channel.channel_type == ChatChannelType.admin:
         return False  # admin-only, and admins already returned True above
+    if channel.channel_type == ChatChannelType.operation:
+        # A Valor Director plans every operation, so they get every channel —
+        # the same relationship admin has to every other channel type. A
+        # plain operator only gets in if they're actually assigned a role.
+        if "valor_director" in roles:
+            return True
+        return channel.operation_id is not None and channel.operation_id in operation_ids
     return False
+
+
+def _operation_ids_for(db: Session, op: Operator) -> set[uuid.UUID]:
+    return {
+        r[0] for r in
+        db.query(OperationRole.operation_id).filter(OperationRole.operator_id == op.id).all()
+    }
 
 
 def _accessible(db: Session, op: Operator) -> list[ChatChannel]:
@@ -76,8 +92,9 @@ def _accessible(db: Session, op: Operator) -> list[ChatChannel]:
     site_ids = {
         r[0] for r in db.query(SiteAccess.site_id).filter(SiteAccess.operator_id == op.id).all()
     }
+    operation_ids = _operation_ids_for(db, op)
     channels = db.query(ChatChannel).options(joinedload(ChatChannel.site)).all()
-    allowed = [c for c in channels if _can_access(c, roles, site_ids)]
+    allowed = [c for c in channels if _can_access(c, roles, site_ids, operation_ids)]
     allowed.sort(key=lambda c: (_TYPE_ORDER.get(c.channel_type, 9), c.name.lower()))
     return allowed
 
@@ -90,7 +107,8 @@ def _channel_or_403(db: Session, op: Operator, slug: str) -> ChatChannel:
     site_ids = {
         r[0] for r in db.query(SiteAccess.site_id).filter(SiteAccess.operator_id == op.id).all()
     }
-    if not _can_access(channel, roles, site_ids):
+    operation_ids = _operation_ids_for(db, op)
+    if not _can_access(channel, roles, site_ids, operation_ids):
         raise HTTPException(status_code=403, detail="You do not have access to this channel")
     return channel
 

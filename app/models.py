@@ -85,6 +85,7 @@ class ChatChannelType(str, enum.Enum):
     site_leads = "site_leads"
     directors = "directors"
     admin = "admin"
+    operation = "operation"
 
 
 class Operator(Base):
@@ -420,6 +421,11 @@ class Operation(Base):
     division = relationship("Division")
     roles = relationship("OperationRole", back_populates="operation",
                          cascade="all, delete-orphan")
+    venues = relationship("OperationVenue", back_populates="operation",
+                          cascade="all, delete-orphan", order_by="OperationVenue.sort_order")
+    vehicles = relationship("OperationVehicle", back_populates="operation",
+                            cascade="all, delete-orphan", order_by="OperationVehicle.sort_order")
+    chat_channel = relationship("ChatChannel", back_populates="operation", uselist=False)
 
 
 class OperationRole(Base):
@@ -433,6 +439,57 @@ class OperationRole(Base):
 
     operation = relationship("Operation", back_populates="roles")
     operator = relationship("Operator")
+
+
+class OperationVenue(Base):
+    """A location tied to an operation — venue, hotel, staging point, whatever
+    the detail needs mapped. lat/lng are optional; without them the venue is
+    still listed, just not pinned on a map."""
+    __tablename__ = "operation_venues"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    address = Column(Text, nullable=True)
+    lat = Column(Numeric(9, 6), nullable=True)
+    lng = Column(Numeric(9, 6), nullable=True)
+    notes = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    operation = relationship("Operation", back_populates="venues")
+
+
+class OperationVehicle(Base):
+    __tablename__ = "operation_vehicles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", ondelete="CASCADE"), nullable=False)
+    vehicle_type = Column(String, nullable=False)
+    plate = Column(String, nullable=True)
+    assigned_operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    operation = relationship("Operation", back_populates="vehicles")
+    assigned_operator = relationship("Operator")
+
+
+class EmergencyCode(Base):
+    """Division-wide reference, not per-operation — a code means the same
+    thing on every engagement. Managed by Valor Director/Admin, readable by
+    anyone with division access."""
+    __tablename__ = "emergency_codes"
+    __table_args__ = (UniqueConstraint("division_id", "code", name="uq_division_emergency_code"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    division_id = Column(UUID(as_uuid=True), ForeignKey("divisions.id", ondelete="CASCADE"), nullable=False)
+    code = Column(String, nullable=False)
+    meaning = Column(String, nullable=False)
+    response = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    active = Column(Boolean, nullable=False, default=True)
+
+    division = relationship("Division")
 
 
 class ClientProfile(Base):
@@ -481,9 +538,11 @@ class ChatChannel(Base):
     name = Column(String, nullable=False)
     channel_type = Column(SAEnum(ChatChannelType), nullable=False)
     site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=True)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", ondelete="CASCADE"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     site = relationship("Site")
+    operation = relationship("Operation", back_populates="chat_channel")
     messages = relationship("ChatMessage", back_populates="channel",
                             cascade="all, delete-orphan")
 
