@@ -14,12 +14,14 @@ from ..clock import local_now_naive, local_today, utc_now_naive
 from ..config import settings
 from ..identity import can_view_licence, licence_status, role_names
 from ..invoicing import build_line_items
-from ..photos import purge_photo, signed_url, upload_photo
+from ..photos import CLIENT_PHOTO_FOLDER, purge_photo, signed_url, upload_photo
 from ..models import (Assignment, AvailabilityPeriod, AvailabilityStatus,
-                      AvailabilitySubmission, CheckIn, CheckInStatus, Invoice,
+                      AvailabilitySubmission, CheckIn, CheckInStatus,
+                      ClientProfile, Division, DivisionOperator, Invoice,
                       InvoiceLineItem, InvoiceStatus, LicenceStatus,
                       OnboardingStatus, Operator, Shift, ShiftStatus)
 from ..schemas import (ActivityRowOut, AssignmentOut, CheckInOut,
+                       ClientProfileOut, ClientProfilePatch, DivisionOut,
                        HistoryRowOut, HoursSummary, InvoiceDetailOut,
                        InvoiceOut, InvoicePreviewOut, InvoiceLineItemOut,
                        MeOverviewOut, NextShiftOut, OperatorOut,
@@ -726,3 +728,122 @@ def submit_invoice(
     db.commit()
     db.refresh(invoice)
     return build_invoice_detail(invoice)
+
+
+@router.get("/divisions", response_model=list[DivisionOut])
+def my_divisions(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Which divisions (e.g. Valor Collective) this operator can see, so the
+    hub knows whether to show that card at all. Director/Admin see every
+    division regardless of a membership row."""
+    roles = role_names(db, current)
+    if roles & {"admin", "director"}:
+        return db.query(Division).order_by(Division.name).all()
+    return (
+        db.query(Division)
+        .join(DivisionOperator, DivisionOperator.division_id == Division.id)
+        .filter(DivisionOperator.operator_id == current.id, DivisionOperator.active.is_(True))
+        .order_by(Division.name)
+        .all()
+    )
+
+
+# ── Client profile (self-managed, Valor Collective) ─────────────────────────
+# Entirely separate from the internal profile — no real name, licence number,
+# or pay rate ever appears here. The operator fully controls publish state.
+
+def _get_or_create_client_profile(db: Session, operator_id: uuid.UUID) -> ClientProfile:
+    cp = db.query(ClientProfile).filter(ClientProfile.operator_id == operator_id).first()
+    if not cp:
+        cp = ClientProfile(operator_id=operator_id)
+        db.add(cp)
+        db.commit()
+        db.refresh(cp)
+    return cp
+
+
+def _build_client_profile_out(cp: ClientProfile) -> ClientProfileOut:
+    return ClientProfileOut(
+        id=cp.id, operator_id=cp.operator_id, headline=cp.headline, bio=cp.bio,
+        skills=cp.skills or [], years_experience=cp.years_experience,
+        has_photo=bool(cp.photo_key),
+        photo_url=signed_url(cp.photo_key) if cp.photo_key else None,
+        visible=cp.visible, updated_at=cp.updated_at,
+    )
+
+
+@router.get("/client-profile", response_model=ClientProfileOut)
+def my_client_profile(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    return _build_client_profile_out(_get_or_create_client_profile(db, current.id))
+
+
+@router.put("/client-profile", response_model=ClientProfileOut)
+def update_client_profile(
+    body: ClientProfilePatch,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    cp = _get_or_create_client_profile(db, current.id)
+    if body.headline is not None:
+        cp.headline = body.headline
+    if body.bio is not None:
+        cp.bio = body.bio
+    if body.skills is not None:
+        cp.skills = body.skills
+    if body.years_experience is not None:
+        cp.years_experience = body.years_experience
+    cp.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(cp)
+    return _build_client_profile_out(cp)
+
+
+@router.post("/client-profile/publish", response_model=ClientProfileOut)
+def publish_client_profile(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    cp = _get_or_create_client_profile(db, current.id)
+    cp.visible = True
+    cp.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(cp)
+    return _build_client_profile_out(cp)
+
+
+@router.post("/client-profile/unpublish", response_model=ClientProfileOut)
+def unpublish_client_profile(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    cp = _get_or_create_client_profile(db, current.id)
+    cp.visible = False
+    cp.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(cp)
+    return _build_client_profile_out(cp)
+
+
+@router.post("/client-profile/photo", response_model=ClientProfileOut)
+async def upload_client_profile_photo(
+    file: UploadFile = File(...),
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """A client-facing photo the operator chooses — a distinct storage key
+    from their internal profile photo, never mixed up with it."""
+    cp = _get_or_create_client_profile(db, current.id)
+    raw = await file.read()
+    old_key = cp.photo_key
+    cp.photo_key = upload_photo(current.id, raw, file.content_type, folder=CLIENT_PHOTO_FOLDER)
+    cp.updated_at = utc_now_naive()
+    db.commit()
+    db.refresh(cp)
+    if old_key:
+        purge_photo(old_key)
+    return _build_client_profile_out(cp)

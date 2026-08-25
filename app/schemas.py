@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
-                     OperatorRole, ShiftStatus, SiteStatus, SiteType)
+                     OperationStatus, OperatorRole, ShiftStatus, SiteStatus, SiteType)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -645,3 +645,135 @@ class CoverageVarianceOut(BaseModel):
     actual_hours: float
     variance_hours: float
     variance_pct: Optional[float] = None
+
+
+# ── Valor Collective ─────────────────────────────────────────────────────────
+# A separate division alongside site-based operations. threat_notes is
+# Director/Admin only — the builder function below omits it entirely for
+# anyone else, the same discipline as licence numbers and pay rates.
+
+class DivisionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    slug: str
+    name: str
+    description: Optional[str] = None
+
+
+class DivisionOperatorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operator_id: uuid.UUID
+    operator_name: Optional[str] = None
+    division_id: uuid.UUID
+    cp_qualifications: Optional[str] = None
+    active: bool
+    added_at: datetime
+
+
+class DivisionOperatorCreate(BaseModel):
+    operator_id: uuid.UUID
+    cp_qualifications: Optional[str] = None
+
+
+class OperationRoleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    operation_id: uuid.UUID
+    role_name: str
+    operator_id: Optional[uuid.UUID] = None
+    operator_name: Optional[str] = None
+    confirmed: bool
+
+
+class OperationRoleCreate(BaseModel):
+    role_name: str
+
+
+class OperationRolePatch(BaseModel):
+    operator_id: Optional[uuid.UUID] = None
+    # Explicit sentinel so "unassign" (null) is distinguishable from "leave
+    # as-is" (field omitted) on a PATCH.
+    unassign: bool = False
+    confirmed: Optional[bool] = None
+
+
+class OperationOut(BaseModel):
+    id: uuid.UUID
+    division_id: uuid.UUID
+    client_name: str
+    operation_name: str
+    status: OperationStatus
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    location: str
+    brief: str
+    # Present only for Director/Admin — absent entirely otherwise.
+    threat_notes: Optional[str] = None
+    created_by: Optional[uuid.UUID] = None
+    created_at: datetime
+    roles: list[OperationRoleOut] = []
+
+
+class OperationCreate(BaseModel):
+    client_name: str
+    operation_name: str
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    location: str
+    brief: str
+    threat_notes: Optional[str] = None
+    status: OperationStatus = OperationStatus.planning
+
+
+class OperationPatch(BaseModel):
+    client_name: Optional[str] = None
+    operation_name: Optional[str] = None
+    status: Optional[OperationStatus] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    location: Optional[str] = None
+    brief: Optional[str] = None
+    threat_notes: Optional[str] = None
+
+
+class ClientProfileOut(BaseModel):
+    id: Optional[uuid.UUID] = None
+    operator_id: uuid.UUID
+    operator_name: Optional[str] = None
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    skills: list[str] = []
+    years_experience: Optional[int] = None
+    has_photo: bool = False
+    photo_url: Optional[str] = None
+    visible: bool = False
+    updated_at: Optional[datetime] = None
+
+
+class ClientProfilePatch(BaseModel):
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    skills: Optional[list[str]] = None
+    years_experience: Optional[int] = None
+
+
+class RosterPackageMember(BaseModel):
+    role_name: str
+    operator_id: uuid.UUID
+    headline: Optional[str] = None
+    bio: Optional[str] = None
+    skills: list[str] = []
+    years_experience: Optional[int] = None
+    has_photo: bool = False
+    photo_url: Optional[str] = None
+
+
+class RosterPackageOut(BaseModel):
+    operation_id: uuid.UUID
+    client_name: str
+    operation_name: str
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    location: str
+    members: list[RosterPackageMember] = []

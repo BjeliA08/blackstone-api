@@ -60,6 +60,14 @@ class InvoiceStatus(str, enum.Enum):
     paid = "paid"
 
 
+class OperationStatus(str, enum.Enum):
+    planning = "planning"
+    confirmed = "confirmed"
+    active = "active"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
 class SiteType(str, enum.Enum):
     permanent = "permanent"
     temporary = "temporary"
@@ -361,6 +369,90 @@ class InvoiceLineItem(Base):
 
     invoice = relationship("Invoice", back_populates="line_items")
     site = relationship("Site")
+
+
+class Division(Base):
+    """A separate line of business alongside site-based operations — e.g.
+    Valor Collective, close protection. Sits beside sites, not inside them."""
+    __tablename__ = "divisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+
+
+class DivisionOperator(Base):
+    """The membership grant. Separate from site_access on purpose — being
+    staffed on a site never implies CP qualification, and vice versa."""
+    __tablename__ = "division_operators"
+    __table_args__ = (UniqueConstraint("operator_id", "division_id", name="uq_operator_division"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=False)
+    division_id = Column(UUID(as_uuid=True), ForeignKey("divisions.id", ondelete="CASCADE"), nullable=False)
+    cp_qualifications = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True)
+    added_at = Column(DateTime, default=datetime.utcnow)
+
+    operator = relationship("Operator", foreign_keys=[operator_id])
+    division = relationship("Division")
+
+
+class Operation(Base):
+    """A close-protection engagement. `threat_notes` is Director/Admin only —
+    never serialized to an assigned operator regardless of their role."""
+    __tablename__ = "operations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    division_id = Column(UUID(as_uuid=True), ForeignKey("divisions.id", ondelete="CASCADE"), nullable=False)
+    client_name = Column(String, nullable=False)
+    operation_name = Column(String, nullable=False)
+    status = Column(SAEnum(OperationStatus), nullable=False, default=OperationStatus.planning)
+    starts_at = Column(DateTime, nullable=False)
+    ends_at = Column(DateTime, nullable=True)
+    location = Column(Text, nullable=False)
+    brief = Column(Text, nullable=False)
+    threat_notes = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    division = relationship("Division")
+    roles = relationship("OperationRole", back_populates="operation",
+                         cascade="all, delete-orphan")
+
+
+class OperationRole(Base):
+    __tablename__ = "operation_roles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", ondelete="CASCADE"), nullable=False)
+    role_name = Column(String, nullable=False)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    confirmed = Column(Boolean, nullable=False, default=False)
+
+    operation = relationship("Operation", back_populates="roles")
+    operator = relationship("Operator")
+
+
+class ClientProfile(Base):
+    """Entirely separate from the internal operator profile — no real name,
+    licence number, or pay rate ever lives here. The operator fully controls
+    publish/unpublish; nothing is client-facing until `visible` is True."""
+    __tablename__ = "client_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    operator_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"),
+                         unique=True, nullable=False)
+    headline = Column(String, nullable=True)
+    bio = Column(Text, nullable=True)
+    skills = Column(ARRAY(String), nullable=True)
+    years_experience = Column(Integer, nullable=True)
+    photo_key = Column(String, nullable=True)
+    visible = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    operator = relationship("Operator")
 
 
 class AvailabilityEntry(Base):

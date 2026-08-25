@@ -26,6 +26,7 @@ MAX_UPLOAD_BYTES = 8 * 1024 * 1024          # 8 MB off the wire
 MAX_DIMENSION = 1024                         # a face shot needs no more
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
 FOLDER = "operator-photos"
+CLIENT_PHOTO_FOLDER = "client-profile-photos"
 
 
 def _configured() -> bool:
@@ -84,11 +85,12 @@ def sanitize_image(raw: bytes, content_type: Optional[str]) -> bytes:
     return out.getvalue()
 
 
-def upload_photo(operator_id: uuid.UUID, raw: bytes, content_type: Optional[str]) -> str:
+def upload_photo(operator_id: uuid.UUID, raw: bytes, content_type: Optional[str],
+                 folder: str = FOLDER) -> str:
     """Store the sanitised image privately and return its storage key."""
     clean = sanitize_image(raw, content_type)
     _configure()
-    public_id = f"{FOLDER}/{operator_id}-{uuid.uuid4().hex[:10]}"
+    public_id = f"{folder}/{operator_id}-{uuid.uuid4().hex[:10]}"
     result = cloudinary.uploader.upload(
         clean,
         public_id=public_id,
