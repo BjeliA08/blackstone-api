@@ -190,7 +190,7 @@ def generate_schedule(
             pool = list(offers.get((day, site.id, ss.shift_name), []))
             slot_index = 0
 
-            for _ in range(site.slot_count):
+            for _ in range(ss.posts_required_on(day.weekday(), site.slot_count)):
                 result.slots_total += 1
                 chosen, reason = _pick(
                     pool, ss, day, site, load, access, respect_site_access

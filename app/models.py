@@ -2,7 +2,7 @@ import uuid
 import enum
 from datetime import datetime
 from sqlalchemy import (Boolean, Column, Date, DateTime, Enum as SAEnum,
-                        ForeignKey, Integer, String, Text, Time, UniqueConstraint)
+                        ForeignKey, Integer, JSON, String, Text, Time, UniqueConstraint)
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy import func
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -280,7 +280,21 @@ class SiteShift(Base):
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Per-weekday override of how many posts this shift needs, keyed "0" (Monday)
+    # through "6" (Sunday) per Python's date.weekday(). Null means every night
+    # needs the site's flat slot_count — most sites never touch this.
+    weekday_posts = Column(JSON, nullable=True)
+
     site = relationship("Site")
+
+    def posts_required_on(self, weekday: int, default: int) -> int:
+        """`default` is the site's flat slot_count, passed in rather than read
+        off self.site so callers already holding the Site avoid a lazy load."""
+        if self.weekday_posts:
+            override = self.weekday_posts.get(str(weekday))
+            if override is not None:
+                return int(override)
+        return default
 
 
 class AvailabilityEntry(Base):

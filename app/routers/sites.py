@@ -73,7 +73,7 @@ def _summary(db: Session, site: Site, operator: Operator, now: datetime) -> Site
             s.posts_required = len(slots)
             s.on_post = sum(1 for a in slots if a.operator_id is not None)
         else:
-            s.posts_required = site.slot_count
+            s.posts_required = current.posts_required_on(today.weekday(), site.slot_count)
 
     # Unfilled slots from today onwards — what someone could still pick up.
     open_rows = (

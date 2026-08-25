@@ -257,6 +257,9 @@ class SiteShiftOut(BaseModel):
     end_time: Optional[time] = None
     sort_order: int
     active: bool
+    # Keyed "0" (Monday) through "6" (Sunday). Null means every night needs
+    # the site's flat slot_count.
+    weekday_posts: Optional[dict[str, int]] = None
 
 
 class SiteShiftCreate(BaseModel):
@@ -265,6 +268,7 @@ class SiteShiftCreate(BaseModel):
     start_time: Optional[time] = None
     end_time: Optional[time] = None
     sort_order: int = 0
+    weekday_posts: Optional[dict[str, int]] = None
 
 
 class SiteShiftPatch(BaseModel):
@@ -274,6 +278,8 @@ class SiteShiftPatch(BaseModel):
     clear_times: bool = False
     sort_order: Optional[int] = None
     active: Optional[bool] = None
+    # Pass {} to clear back to the flat slot_count for every night.
+    weekday_posts: Optional[dict[str, int]] = None
 
 
 class AvailabilityEntryIn(BaseModel):

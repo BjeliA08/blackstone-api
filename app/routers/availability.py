@@ -45,6 +45,7 @@ def _build_site_shift_out(ss: SiteShift) -> SiteShiftOut:
         end_time=ss.end_time,
         sort_order=ss.sort_order,
         active=ss.active,
+        weekday_posts=ss.weekday_posts,
     )
 
 
@@ -159,12 +160,14 @@ def create_site_shift(
         existing.sort_order = body.sort_order
         existing.start_time = body.start_time
         existing.end_time = body.end_time
+        existing.weekday_posts = body.weekday_posts
         db.commit()
         db.refresh(existing)
         return _build_site_shift_out(existing)
 
     ss = SiteShift(site_id=site.id, shift_name=name, sort_order=body.sort_order,
-                   start_time=body.start_time, end_time=body.end_time)
+                   start_time=body.start_time, end_time=body.end_time,
+                   weekday_posts=body.weekday_posts)
     db.add(ss)
     db.commit()
     db.refresh(ss)
@@ -198,6 +201,8 @@ def patch_site_shift(
         ss.sort_order = body.sort_order
     if body.active is not None:
         ss.active = body.active
+    if body.weekday_posts is not None:
+        ss.weekday_posts = body.weekday_posts or None
     db.commit()
     db.refresh(ss)
     return _build_site_shift_out(ss)
