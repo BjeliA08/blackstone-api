@@ -38,20 +38,26 @@ def _configure() -> None:
 def upload_pdf(site_slug: str, raw: bytes) -> str:
     _configure()
     public_id = f"{FOLDER}/{site_slug}-{uuid.uuid4().hex[:12]}"
-    result = cloudinary.uploader.upload(
-        raw,
-        public_id=public_id,
-        type="private",
-        resource_type="raw",
-        overwrite=True,
-    )
+    try:
+        result = cloudinary.uploader.upload(
+            raw,
+            public_id=public_id,
+            type="private",
+            resource_type="raw",
+            overwrite=True,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Document upload failed: {e}")
     return result.get("public_id", public_id)
 
 
 def signed_pdf_url(file_key: str) -> str:
     _configure()
     expires_at = int(time.time()) + settings.RECORD_EXPORT_URL_TTL_SECONDS
-    url, _ = cloudinary.utils.private_download_url(
-        file_key, "pdf", resource_type="raw", type="private", expires_at=expires_at,
-    )
+    try:
+        url, _ = cloudinary.utils.private_download_url(
+            file_key, "pdf", resource_type="raw", type="private", expires_at=expires_at,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Could not sign document URL: {e}")
     return url
