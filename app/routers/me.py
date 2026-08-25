@@ -730,6 +730,17 @@ def submit_invoice(
     return build_invoice_detail(invoice)
 
 
+@router.get("/roles", response_model=list[str])
+def my_role_names(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Every role name this operator holds, including custom ones like
+    valor_director — the legacy single `role` enum on OperatorOut can't
+    express that, so the frontend needs this to gate role-specific portals."""
+    return sorted(role_names(db, current))
+
+
 @router.get("/divisions", response_model=list[DivisionOut])
 def my_divisions(
     current: Operator = Depends(get_current_operator),

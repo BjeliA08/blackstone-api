@@ -400,7 +400,7 @@ class DivisionOperator(Base):
 
 
 class Operation(Base):
-    """A close-protection engagement. `threat_notes` is Director/Admin only —
+    """A close-protection engagement. `threat_notes` is Valor Director/Admin only —
     never serialized to an assigned operator regardless of their role."""
     __tablename__ = "operations"
 

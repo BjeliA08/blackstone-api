@@ -649,7 +649,7 @@ class CoverageVarianceOut(BaseModel):
 
 # ── Valor Collective ─────────────────────────────────────────────────────────
 # A separate division alongside site-based operations. threat_notes is
-# Director/Admin only — the builder function below omits it entirely for
+# Valor Director/Admin only — the builder function below omits it entirely for
 # anyone else, the same discipline as licence numbers and pay rates.
 
 class DivisionOut(BaseModel):
@@ -708,7 +708,7 @@ class OperationOut(BaseModel):
     ends_at: Optional[datetime] = None
     location: str
     brief: str
-    # Present only for Director/Admin — absent entirely otherwise.
+    # Present only for Valor Director/Admin — absent entirely otherwise.
     threat_notes: Optional[str] = None
     created_by: Optional[uuid.UUID] = None
     created_at: datetime

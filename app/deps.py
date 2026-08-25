@@ -44,6 +44,26 @@ def require_director(
     return current
 
 
+def require_valor_director(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+) -> Operator:
+    """Valor Collective planning is gated separately from the general
+    director role — a site Director is not automatically a Valor Director."""
+    if current.role == OperatorRole.admin:
+        return current
+    has_access = (
+        db.query(OperatorRoleAssignment)
+        .join(Role)
+        .filter(OperatorRoleAssignment.operator_id == current.id,
+                Role.name.in_(["admin", "valor_director"]))
+        .first()
+    )
+    if not has_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Valor Director role required")
+    return current
+
+
 def require_admin(
     current: Operator = Depends(get_current_operator),
     db: Session = Depends(get_db),

@@ -4,9 +4,10 @@ Sits alongside site-based operations, not inside them. Division membership
 (division_operators) is a separate grant from site_access: no operator is
 CP-qualified by default, and being CP-qualified grants nothing at a site.
 
-threat_notes on an operation is Director/Admin only, enforced here by simply
-never putting it on the object handed to anyone else — not by hiding it in
-the UI.
+Planning access is gated by the valor_director role (or Admin), not the
+general site director role — a site Director is not automatically a Valor
+Director. threat_notes on an operation follows the same gate, enforced here
+by simply never putting it on the object handed to anyone else.
 """
 import uuid
 from typing import Optional
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from ..clock import utc_now_naive
 from ..database import get_db
-from ..deps import get_current_operator, require_director
+from ..deps import get_current_operator, require_valor_director
 from ..identity import role_names
 from ..models import (ClientProfile, Division, DivisionOperator, Operation,
                       OperationRole, OperationStatus, Operator)
@@ -39,8 +40,10 @@ def _division(db: Session) -> Division:
 
 
 def _is_privileged(db: Session, current: Operator) -> bool:
+    """Valor's own privilege tier — a site Director is not automatically
+    privileged here; only Admin and Valor Director are."""
     roles = role_names(db, current)
-    return bool(roles & {"admin", "director"})
+    return bool(roles & {"admin", "valor_director"})
 
 
 def is_division_member(db: Session, operator_id: uuid.UUID, division_id: uuid.UUID) -> bool:
@@ -165,7 +168,7 @@ def cp_roster(
 @router.post("/division-operators", response_model=DivisionOperatorOut, status_code=201)
 def add_division_operator(
     body: DivisionOperatorCreate,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     division = _division(db)
@@ -206,7 +209,7 @@ def add_division_operator(
 @router.delete("/division-operators/{row_id}", status_code=204)
 def remove_division_operator(
     row_id: uuid.UUID,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     """Retired rather than deleted, so operation-role history stays readable."""
@@ -219,7 +222,7 @@ def remove_division_operator(
 @router.post("/operations", response_model=OperationOut, status_code=201)
 def create_operation(
     body: OperationCreate,
-    current: Operator = Depends(require_director),
+    current: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     division = _division(db)
@@ -240,7 +243,7 @@ def create_operation(
 def patch_operation(
     operation_id: uuid.UUID,
     body: OperationPatch,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     op_row = db.get(Operation, operation_id)
@@ -260,7 +263,7 @@ def patch_operation(
 def add_operation_role(
     operation_id: uuid.UUID,
     body: OperationRoleCreate,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     op_row = db.get(Operation, operation_id)
@@ -281,7 +284,7 @@ def patch_operation_role(
     operation_id: uuid.UUID,
     role_id: uuid.UUID,
     body: OperationRolePatch,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     division = _division(db)
@@ -317,7 +320,7 @@ def patch_operation_role(
 @router.get("/client-profiles", response_model=list[ClientProfileOut])
 def list_client_profiles(
     visible: Optional[bool] = Query(None),
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     q = db.query(ClientProfile).options(joinedload(ClientProfile.operator))
@@ -329,7 +332,7 @@ def list_client_profiles(
 @router.get("/operations/{operation_id}/roster-package", response_model=RosterPackageOut)
 def roster_package(
     operation_id: uuid.UUID,
-    _: Operator = Depends(require_director),
+    _: Operator = Depends(require_valor_director),
     db: Session = Depends(get_db),
 ):
     """The confirmed team with their published client profiles attached —
