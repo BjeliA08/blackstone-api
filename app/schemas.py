@@ -5,7 +5,8 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
-                     OperationStatus, OperatorRole, ShiftStatus, SiteStatus, SiteType)
+                     OperationStatus, OperatorRole, ShiftStatus, SiteReportCategory,
+                     SiteStatus, SiteType)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -961,3 +962,61 @@ class RecordExportOut(BaseModel):
     purpose: Optional[str] = None
     include_rates: bool
     download_url: Optional[str] = None
+
+
+# ── Site Reports ────────────────────────────────────────────────────────────
+# One schema per category for its structured `details`, plus the shared
+# envelope (category, occurred_at, narrative) every report carries. The
+# category → detail-schema mapping lives in routers/site_reports.py, which
+# validates the raw `details` dict against the right one before storing it.
+
+class NarcanReportDetails(BaseModel):
+    doses_administered: int
+    recipient_description: str
+    naloxone_response: str
+    ems_called: bool
+
+
+class IncidentReportDetails(BaseModel):
+    severity: str
+    persons_involved: str
+    action_taken: str
+
+
+class EjectionReportDetails(BaseModel):
+    person_ejected: str
+    reason: str
+    banned_duration: Optional[str] = None
+    police_involved: bool = False
+
+
+class EPSCallReportDetails(BaseModel):
+    reason_for_call: str
+    unit_or_badge_number: Optional[str] = None
+    outcome: str
+
+
+class EMSCallReportDetails(BaseModel):
+    reason_for_call: str
+    unit_number: Optional[str] = None
+    transported: bool
+    outcome: str
+
+
+class SiteReportCreate(BaseModel):
+    category: SiteReportCategory
+    occurred_at: datetime
+    narrative: str
+    details: dict
+
+
+class SiteReportOut(BaseModel):
+    id: uuid.UUID
+    site_id: uuid.UUID
+    category: SiteReportCategory
+    occurred_at: datetime
+    narrative: str
+    details: Optional[dict] = None
+    submitted_by: uuid.UUID
+    submitted_by_name: str
+    created_at: datetime

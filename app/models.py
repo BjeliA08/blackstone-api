@@ -592,6 +592,35 @@ class ChatRead(Base):
     last_read_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
+class SiteReportCategory(str, enum.Enum):
+    narcan_administration = "narcan_administration"
+    incident_report = "incident_report"
+    ejection = "ejection"
+    eps_call = "eps_call"
+    ems_call = "ems_call"
+
+
+class SiteReport(Base):
+    """An operational report filed by whoever is on shift — Narcan use,
+    incidents, ejections, and calls to police/EMS. Every category shares the
+    same core fields (when/who/what happened); category-specific details
+    (dose count, unit numbers, etc.) live in `details` rather than as columns
+    per category, since the set of categories is expected to grow."""
+    __tablename__ = "site_reports"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    category = Column(SAEnum(SiteReportCategory), nullable=False)
+    occurred_at = Column(DateTime, nullable=False)
+    submitted_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=False)
+    narrative = Column(Text, nullable=False)
+    details = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    site = relationship("Site")
+    submitted_by_operator = relationship("Operator", foreign_keys=[submitted_by])
+
+
 class InviteCode(Base):
     """Signup is impossible without one of these. Codes can pre-assign a role
     and site access so a new hire arrives already configured."""
