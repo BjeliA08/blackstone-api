@@ -421,6 +421,11 @@ class ChatMessageOut(BaseModel):
     operator_photo_url: Optional[str] = None
     body: str
     created_at: datetime
+    attachment_filename: Optional[str] = None
+    attachment_url: Optional[str] = None
+    attachment_site_slug: Optional[str] = None
+    attachment_period_month: Optional[int] = None
+    attachment_period_year: Optional[int] = None
 
 
 class ChatMessageCreate(BaseModel):

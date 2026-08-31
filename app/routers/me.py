@@ -12,15 +12,18 @@ from ..database import get_db
 from ..deps import get_current_operator
 from ..clock import local_now_naive, local_today, utc_now_naive
 from ..config import settings
+from ..documents import signed_attachment_url, upload_attachment
 from ..identity import can_view_licence, licence_status, role_names
 from ..invoicing import build_line_items
 from ..photos import CLIENT_PHOTO_FOLDER, purge_photo, signed_url, upload_photo
 from ..models import (Assignment, AvailabilityPeriod, AvailabilityStatus,
-                      AvailabilitySubmission, CheckIn, CheckInStatus,
+                      AvailabilitySubmission, ChatChannel, ChatChannelType,
+                      ChatMessage, CheckIn, CheckInStatus,
                       ClientProfile, Division, DivisionOperator, Invoice,
                       InvoiceLineItem, InvoiceStatus, LicenceStatus,
-                      OnboardingStatus, Operator, Shift, ShiftStatus)
-from ..schemas import (ActivityRowOut, AssignmentOut, CheckInOut,
+                      OnboardingStatus, Operator, Shift, ShiftStatus, Site,
+                      SiteAccess)
+from ..schemas import (ActivityRowOut, AssignmentOut, ChatMessageOut, CheckInOut,
                        ClientProfileOut, ClientProfilePatch, DivisionOut,
                        HistoryRowOut, HoursSummary, InvoiceDetailOut,
                        InvoiceOut, InvoicePreviewOut, InvoiceLineItemOut,
@@ -728,6 +731,103 @@ def submit_invoice(
     db.commit()
     db.refresh(invoice)
     return build_invoice_detail(invoice)
+
+
+MAX_INVOICE_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+
+
+@router.post("/invoices/upload", response_model=ChatMessageOut, status_code=201)
+async def upload_invoice(
+    site_id: uuid.UUID,
+    period_month: int = Query(..., ge=1, le=12),
+    period_year: int = Query(..., ge=2020),
+    file: UploadFile = File(...),
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Operators submit their own invoice as a file rather than the app
+    computing one. It's posted into the Directors channel as an attachment
+    tagged with site + period, so a Director can browse by site then month
+    without scrolling the raw feed (see GET /chat/directors/invoices)."""
+    site = db.get(Site, site_id)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    has_access = (
+        db.query(SiteAccess)
+        .filter(SiteAccess.operator_id == current.id, SiteAccess.site_id == site_id)
+        .first()
+    )
+    if not has_access:
+        raise HTTPException(status_code=403, detail="You do not have access to this site")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="No file was received")
+    if len(raw) > MAX_INVOICE_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="File is too large (max 15 MB)")
+    filename = file.filename or "invoice"
+
+    channel = (
+        db.query(ChatChannel)
+        .filter(ChatChannel.channel_type == ChatChannelType.directors)
+        .first()
+    )
+    if not channel:
+        raise HTTPException(status_code=500, detail="Directors channel is not configured")
+
+    attachment_key = upload_attachment(str(current.id), filename, raw)
+
+    msg = ChatMessage(
+        channel_id=channel.id, operator_id=current.id,
+        body=f"📄 Invoice uploaded — {site.name} — {period_year}-{period_month:02d}",
+        created_at=local_now_naive(),
+        attachment_key=attachment_key, attachment_filename=filename,
+        attachment_site_id=site.id,
+        attachment_period_month=period_month, attachment_period_year=period_year,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    return ChatMessageOut(
+        id=msg.id, channel_id=msg.channel_id, operator_id=msg.operator_id,
+        operator_name=current.full_name,
+        operator_photo_url=signed_url(current.photo_key) if current.photo_key else None,
+        body=msg.body, created_at=msg.created_at,
+        attachment_filename=msg.attachment_filename,
+        attachment_url=signed_attachment_url(attachment_key, filename),
+        attachment_site_slug=site.slug,
+        attachment_period_month=period_month, attachment_period_year=period_year,
+    )
+
+
+@router.get("/invoices/uploads", response_model=list[ChatMessageOut])
+def my_invoice_uploads(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """This operator's own upload history, newest first."""
+    rows = (
+        db.query(ChatMessage)
+        .options(joinedload(ChatMessage.attachment_site))
+        .filter(ChatMessage.operator_id == current.id, ChatMessage.attachment_key.isnot(None))
+        .order_by(ChatMessage.created_at.desc())
+        .all()
+    )
+    photo_url = signed_url(current.photo_key) if current.photo_key else None
+    return [
+        ChatMessageOut(
+            id=m.id, channel_id=m.channel_id, operator_id=m.operator_id,
+            operator_name=current.full_name, operator_photo_url=photo_url,
+            body=m.body, created_at=m.created_at,
+            attachment_filename=m.attachment_filename,
+            attachment_url=signed_attachment_url(m.attachment_key, m.attachment_filename),
+            attachment_site_slug=m.attachment_site.slug if m.attachment_site else None,
+            attachment_period_month=m.attachment_period_month,
+            attachment_period_year=m.attachment_period_year,
+        )
+        for m in rows
+    ]
 
 
 @router.get("/roles", response_model=list[str])

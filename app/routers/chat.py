@@ -14,7 +14,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..deps import get_current_operator
+from ..deps import get_current_operator, require_director
+from ..documents import signed_attachment_url
 from ..models import (ChatChannel, ChatChannelType, ChatMessage, ChatRead,
                       OperationRole, Operator, OperatorRole,
                       OperatorRoleAssignment, Role, SiteAccess)
@@ -252,6 +253,20 @@ def open_dm(
     )
 
 
+def _message_out(m: ChatMessage, photo_url: Optional[str], operator_name: str) -> ChatMessageOut:
+    return ChatMessageOut(
+        id=m.id, channel_id=m.channel_id, operator_id=m.operator_id,
+        operator_name=operator_name, operator_photo_url=photo_url,
+        body=m.body, created_at=m.created_at,
+        attachment_filename=m.attachment_filename,
+        attachment_url=signed_attachment_url(m.attachment_key, m.attachment_filename)
+                      if m.attachment_key and m.attachment_filename else None,
+        attachment_site_slug=m.attachment_site.slug if m.attachment_site else None,
+        attachment_period_month=m.attachment_period_month,
+        attachment_period_year=m.attachment_period_year,
+    )
+
+
 # ── Messages ──────────────────────────────────────────────────────────────────
 
 @router.get("/channels/{slug}/messages", response_model=list[ChatMessageOut])
@@ -267,7 +282,7 @@ def list_messages(
 
     q = (
         db.query(ChatMessage)
-        .options(joinedload(ChatMessage.operator))
+        .options(joinedload(ChatMessage.operator), joinedload(ChatMessage.attachment_site))
         .filter(ChatMessage.channel_id == channel.id)
     )
     if before is not None:
@@ -287,12 +302,7 @@ def list_messages(
         return photo_urls[op.id]
 
     return [
-        ChatMessageOut(
-            id=m.id, channel_id=m.channel_id, operator_id=m.operator_id,
-            operator_name=m.operator.full_name if m.operator else "Unknown",
-            operator_photo_url=_photo_url(m.operator),
-            body=m.body, created_at=m.created_at,
-        )
+        _message_out(m, _photo_url(m.operator), m.operator.full_name if m.operator else "Unknown")
         for m in rows
     ]
 
@@ -323,11 +333,8 @@ def send_message(
     db.commit()
     db.refresh(msg)
 
-    return ChatMessageOut(
-        id=msg.id, channel_id=msg.channel_id, operator_id=msg.operator_id,
-        operator_name=current.full_name,
-        operator_photo_url=signed_url(current.photo_key) if current.photo_key else None,
-        body=msg.body, created_at=msg.created_at,
+    return _message_out(
+        msg, signed_url(current.photo_key) if current.photo_key else None, current.full_name,
     )
 
 
@@ -367,3 +374,46 @@ def mark_read(
     now = _mark_read(db, channel.id, current.id)
     db.commit()
     return ChatReadResult(channel_id=channel.id, last_read_at=now)
+
+
+@router.get("/directors/invoices", response_model=list[ChatMessageOut])
+def list_uploaded_invoices(
+    site_id: uuid.UUID,
+    month: Optional[int] = Query(None, ge=1, le=12),
+    year: Optional[int] = None,
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """Invoice uploads for one site, newest first — the browsing view a
+    Director actually uses, on top of the raw Directors channel feed these
+    messages also appear in. Site is required (this is a per-site view);
+    month/year narrow it further once a site is picked."""
+    q = (
+        db.query(ChatMessage)
+        .join(ChatChannel, ChatMessage.channel_id == ChatChannel.id)
+        .options(joinedload(ChatMessage.operator), joinedload(ChatMessage.attachment_site))
+        .filter(
+            ChatChannel.channel_type == ChatChannelType.directors,
+            ChatMessage.attachment_key.isnot(None),
+            ChatMessage.attachment_site_id == site_id,
+        )
+    )
+    if month is not None:
+        q = q.filter(ChatMessage.attachment_period_month == month)
+    if year is not None:
+        q = q.filter(ChatMessage.attachment_period_year == year)
+
+    rows = q.order_by(ChatMessage.created_at.desc()).all()
+    photo_urls: dict[uuid.UUID, Optional[str]] = {}
+
+    def _photo_url(op: Optional[Operator]) -> Optional[str]:
+        if not op or not op.photo_key:
+            return None
+        if op.id not in photo_urls:
+            photo_urls[op.id] = signed_url(op.photo_key)
+        return photo_urls[op.id]
+
+    return [
+        _message_out(m, _photo_url(m.operator), m.operator.full_name if m.operator else "Unknown")
+        for m in rows
+    ]

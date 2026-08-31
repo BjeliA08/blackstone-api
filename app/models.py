@@ -587,8 +587,18 @@ class ChatMessage(Base):
     body = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+    # A file attached to this message — currently only used for invoice
+    # uploads into the Directors channel, but kept generic (not "invoice_*")
+    # since any future "post a file into chat" feature is the same shape.
+    attachment_key = Column(String, nullable=True)
+    attachment_filename = Column(String, nullable=True)
+    attachment_site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id"), nullable=True)
+    attachment_period_month = Column(Integer, nullable=True)
+    attachment_period_year = Column(Integer, nullable=True)
+
     channel = relationship("ChatChannel", back_populates="messages")
     operator = relationship("Operator")
+    attachment_site = relationship("Site")
 
 
 class ChatRead(Base):
