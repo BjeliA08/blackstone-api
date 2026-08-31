@@ -1001,6 +1001,10 @@ class EjectionReportDetails(BaseModel):
     # No ban-duration field here — an ejection gets its ban length from the
     # SOS entry filed for it, not duplicated on this report.
     police_involved: bool = False
+    # Only meaningful when police_involved is true — same relationship as
+    # ems_bus_number/ems_called on NarcanReportDetails.
+    eps_file_number: Optional[str] = None
+    eps_regiment_number: Optional[str] = None
 
 
 class EPSCallReportDetails(BaseModel):
