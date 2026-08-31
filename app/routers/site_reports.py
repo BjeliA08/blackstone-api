@@ -1,9 +1,11 @@
 """Operational report filing — Narcan administration, incidents, ejections,
 and EPS/EMS calls.
 
-Shelter-only for now (the only site that needs it); the guard is a single
-slug check below rather than a site attribute, so extending this to other
-sites later is a one-line change, not a migration.
+Which sites report which categories is an operational decision, not schema
+— it's a plain dict below rather than a Site column or a migration. Shelter
+gets everything (it's the only site that needs Narcan/EMS/EPS); Club101 and
+Starhall only get Ejection and Incident Report, since those are the
+categories that actually happen at a club/event venue.
 
 Any operator with SiteAccess to the site can file a report — this happens
 during or right after a shift, by whoever was there, not after the fact by a
@@ -27,11 +29,6 @@ from ..schemas import (EjectionReportDetails, EMSCallReportDetails,
 
 router = APIRouter(prefix="/site/{slug}/reports", tags=["site-reports"])
 
-# Sites this feature is enabled on. A slug check rather than a Site column,
-# since "which sites report which things" is an operational decision, not
-# schema — flip it here when Shelter isn't the only one anymore.
-ENABLED_SITE_SLUGS = {"shelter"}
-
 DETAIL_SCHEMAS = {
     SiteReportCategory.narcan_administration: NarcanReportDetails,
     SiteReportCategory.incident_report: IncidentReportDetails,
@@ -40,9 +37,19 @@ DETAIL_SCHEMAS = {
     SiteReportCategory.ems_call: EMSCallReportDetails,
 }
 
+ALL_CATEGORIES = set(DETAIL_SCHEMAS)
+CLUB_CATEGORIES = {SiteReportCategory.ejection, SiteReportCategory.incident_report}
+
+# Sites this feature is enabled on, and which categories each one allows.
+SITE_ALLOWED_CATEGORIES: dict[str, set] = {
+    "shelter": ALL_CATEGORIES,
+    "club101": CLUB_CATEGORIES,
+    "starhall": CLUB_CATEGORIES,
+}
+
 
 def _get_enabled_site(db: Session, slug: str) -> Site:
-    if slug not in ENABLED_SITE_SLUGS:
+    if slug not in SITE_ALLOWED_CATEGORIES:
         raise HTTPException(status_code=404, detail="Site reports are not enabled for this site")
     site = db.query(Site).filter(Site.slug == slug).first()
     if not site:
@@ -88,6 +95,10 @@ def create_report(
 ):
     site = _get_enabled_site(db, slug)
     _require_site_access(db, current, site)
+
+    if body.category not in SITE_ALLOWED_CATEGORIES[slug]:
+        raise HTTPException(status_code=400,
+                           detail=f"{body.category.value} reports are not enabled for this site")
 
     schema = DETAIL_SCHEMAS[body.category]
     try:
