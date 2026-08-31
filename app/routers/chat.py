@@ -18,6 +18,7 @@ from ..deps import get_current_operator
 from ..models import (ChatChannel, ChatChannelType, ChatMessage, ChatRead,
                       OperationRole, Operator, OperatorRole,
                       OperatorRoleAssignment, Role, SiteAccess)
+from ..photos import signed_url
 from ..schemas import (ChatChannelOut, ChatMessageCreate, ChatMessageOut,
                        ChatReadResult)
 
@@ -207,10 +208,23 @@ def list_messages(
         q = q.filter(ChatMessage.created_at < before)
 
     rows = q.order_by(ChatMessage.created_at.desc()).limit(limit).all()
+    # Signing is a local HMAC computation, not a network call, but memoize
+    # per operator anyway — a page of messages is usually a handful of
+    # people, not one signed URL per message.
+    photo_urls: dict[uuid.UUID, Optional[str]] = {}
+
+    def _photo_url(op: Optional[Operator]) -> Optional[str]:
+        if not op or not op.photo_key:
+            return None
+        if op.id not in photo_urls:
+            photo_urls[op.id] = signed_url(op.photo_key)
+        return photo_urls[op.id]
+
     return [
         ChatMessageOut(
             id=m.id, channel_id=m.channel_id, operator_id=m.operator_id,
             operator_name=m.operator.full_name if m.operator else "Unknown",
+            operator_photo_url=_photo_url(m.operator),
             body=m.body, created_at=m.created_at,
         )
         for m in rows
@@ -245,7 +259,9 @@ def send_message(
 
     return ChatMessageOut(
         id=msg.id, channel_id=msg.channel_id, operator_id=msg.operator_id,
-        operator_name=current.full_name, body=msg.body, created_at=msg.created_at,
+        operator_name=current.full_name,
+        operator_photo_url=signed_url(current.photo_key) if current.photo_key else None,
+        body=msg.body, created_at=msg.created_at,
     )
 
 

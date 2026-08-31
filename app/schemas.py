@@ -413,6 +413,7 @@ class ChatMessageOut(BaseModel):
     channel_id: uuid.UUID
     operator_id: uuid.UUID
     operator_name: str
+    operator_photo_url: Optional[str] = None
     body: str
     created_at: datetime
 
