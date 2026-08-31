@@ -998,7 +998,8 @@ class EjectionReportDetails(BaseModel):
     ejected_first_name: str
     ejected_last_name: str
     reason: str
-    banned_duration: Optional[str] = None
+    # No ban-duration field here — an ejection gets its ban length from the
+    # SOS entry filed for it, not duplicated on this report.
     police_involved: bool = False
 
 
