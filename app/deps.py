@@ -5,7 +5,8 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 from .auth import decode_token
 from .database import get_db
-from .models import Operator, OperatorRole, OperatorRoleAssignment, Role
+from .models import (Operator, OperatorRole, OperatorRoleAssignment, Role,
+                     Site, SiteFeature, SiteFeatureKey)
 
 bearer = HTTPBearer()
 
@@ -77,3 +78,22 @@ def require_admin(
     if not has_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
     return current
+
+
+def site_feature_enabled(db: Session, site_id, feature_key: SiteFeatureKey) -> bool:
+    """Absence of a row means enabled — every site should get a full
+    row-set at creation time, but this fails open rather than locking a
+    site out of everything if a row is ever missing."""
+    row = (
+        db.query(SiteFeature)
+        .filter(SiteFeature.site_id == site_id, SiteFeature.feature_key == feature_key)
+        .first()
+    )
+    return row is None or row.enabled
+
+
+def require_site_feature(db: Session, site: Site, feature_key: SiteFeatureKey) -> None:
+    """Raises 403 if this site has the feature explicitly disabled."""
+    if not site_feature_enabled(db, site.id, feature_key):
+        raise HTTPException(status_code=403,
+                           detail=f"{feature_key.value} is not enabled for {site.name}")

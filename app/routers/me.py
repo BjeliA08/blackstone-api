@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from ..business import (hours_for_operator_month, is_missed_check_in,
                          is_missed_check_out, operator_has_overlap)
 from ..database import get_db
-from ..deps import get_current_operator
+from ..deps import get_current_operator, require_site_feature
 from ..clock import local_now_naive, local_today, utc_now_naive
 from ..config import settings
 from ..documents import signed_attachment_url, upload_attachment
@@ -22,7 +22,7 @@ from ..models import (Assignment, AvailabilityPeriod, AvailabilityStatus,
                       ClientProfile, Division, DivisionOperator, Invoice,
                       InvoiceLineItem, InvoiceStatus, LicenceStatus,
                       OnboardingStatus, Operator, Shift, ShiftStatus, Site,
-                      SiteAccess)
+                      SiteAccess, SiteFeatureKey)
 from ..schemas import (ActivityRowOut, AssignmentOut, ChatMessageOut, CheckInOut,
                        ClientProfileOut, ClientProfilePatch, DivisionOut,
                        HistoryRowOut, HoursSummary, InvoiceDetailOut,
@@ -129,13 +129,15 @@ def check_in(
             Shift.date == today,
             Shift.status == ShiftStatus.approved,
         )
-        .options(joinedload(Assignment.shift), joinedload(Assignment.check_in))
+        .options(joinedload(Assignment.shift).joinedload(Shift.site), joinedload(Assignment.check_in))
         .order_by(Assignment.start_time)
         .first()
     )
 
     if not assignment:
         raise HTTPException(status_code=404, detail="No approved shift found for today")
+    if assignment.shift and assignment.shift.site:
+        require_site_feature(db, assignment.shift.site, SiteFeatureKey.check_in_check_out)
 
     if assignment.check_in and assignment.check_in.status == CheckInStatus.checked_in:
         raise HTTPException(status_code=400, detail="Already checked in to this shift")
@@ -169,6 +171,7 @@ def check_out(
 
     ci: CheckIn | None = (
         db.query(CheckIn)
+        .options(joinedload(CheckIn.assignment).joinedload(Assignment.shift).joinedload(Shift.site))
         .filter(
             CheckIn.operator_id == current.id,
             CheckIn.status == CheckInStatus.checked_in,
@@ -179,6 +182,8 @@ def check_out(
 
     if not ci:
         raise HTTPException(status_code=404, detail="No active check-in found")
+    if ci.assignment and ci.assignment.shift and ci.assignment.shift.site:
+        require_site_feature(db, ci.assignment.shift.site, SiteFeatureKey.check_in_check_out)
 
     ci.actual_check_out = now
     ci.status = CheckInStatus.checked_out
@@ -759,6 +764,7 @@ async def upload_invoice(
     )
     if not has_access:
         raise HTTPException(status_code=403, detail="You do not have access to this site")
+    require_site_feature(db, site, SiteFeatureKey.invoicing)
 
     raw = await file.read()
     if not raw:

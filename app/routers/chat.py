@@ -14,18 +14,19 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..deps import get_current_operator, require_director
+from ..deps import get_current_operator, require_director, require_site_feature, site_feature_enabled
 from ..documents import signed_attachment_url
 from ..models import (ChatChannel, ChatChannelType, ChatMessage, ChatRead,
                       OperationRole, Operator, OperatorRole,
-                      OperatorRoleAssignment, Role, SiteAccess)
+                      OperatorRoleAssignment, Role, Site, SiteAccess,
+                      SiteFeatureKey)
 from ..photos import signed_url
 from ..schemas import (ChatChannelOut, ChatMessageCreate, ChatMessageOut,
                        ChatReadResult)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-SITE_LEAD_ROLES = {"shelter_site_lead", "club101_site_lead", "starhall_site_lead"}
+SITE_LEAD_SUFFIX = "_site_lead"
 
 MAX_BODY_CHARS = 4000
 
@@ -72,7 +73,7 @@ def _can_access(channel: ChatChannel, roles: set[str], site_ids: set[uuid.UUID],
     if channel.channel_type == ChatChannelType.site:
         return channel.site_id is not None and channel.site_id in site_ids
     if channel.channel_type == ChatChannelType.site_leads:
-        return bool(roles & SITE_LEAD_ROLES)
+        return any(r.endswith(SITE_LEAD_SUFFIX) for r in roles)
     if channel.channel_type == ChatChannelType.directors:
         return "director" in roles
     if channel.channel_type == ChatChannelType.admin:
@@ -101,7 +102,12 @@ def _accessible(db: Session, op: Operator) -> list[ChatChannel]:
     }
     operation_ids = _operation_ids_for(db, op)
     channels = db.query(ChatChannel).options(joinedload(ChatChannel.site)).all()
-    allowed = [c for c in channels if _can_access(c, roles, site_ids, operation_ids, op.id)]
+    allowed = [
+        c for c in channels
+        if _can_access(c, roles, site_ids, operation_ids, op.id)
+        and (c.channel_type != ChatChannelType.site or c.site_id is None
+             or site_feature_enabled(db, c.site_id, SiteFeatureKey.chat))
+    ]
     allowed.sort(key=lambda c: (_TYPE_ORDER.get(c.channel_type, 9), c.name.lower()))
     return allowed
 
@@ -117,6 +123,12 @@ def _channel_or_403(db: Session, op: Operator, slug: str) -> ChatChannel:
     operation_ids = _operation_ids_for(db, op)
     if not _can_access(channel, roles, site_ids, operation_ids, op.id):
         raise HTTPException(status_code=403, detail="You do not have access to this channel")
+    # A site with chat turned off is closed to everyone, admin included —
+    # this is a site-level toggle, not a permission.
+    if channel.channel_type == ChatChannelType.site and channel.site_id:
+        site = db.get(Site, channel.site_id)
+        if site:
+            require_site_feature(db, site, SiteFeatureKey.chat)
     return channel
 
 

@@ -139,7 +139,11 @@ def compliance_records(db: Session, site: Site, start: date, end: date) -> list[
     return sorted(seen.values(), key=lambda c: c.operator_name)
 
 
-def incident_records(site: Site, start: date, end: date) -> list[RecordIncidentOut]:
+def incident_records(db: Session, site: Site, start: date, end: date) -> list[RecordIncidentOut]:
+    from .deps import site_feature_enabled
+    from .models import SiteFeatureKey
+    if not site_feature_enabled(db, site.id, SiteFeatureKey.sos):
+        return []
     entries = fetch_sos_entries(site.name, start, end)
     return [RecordIncidentOut(
         date=date.fromisoformat(e["date"]), incident_type=e["incident_type"],
@@ -155,6 +159,6 @@ def build_site_records(db: Session, site: Site, start: date, end: date,
         shifts=coverage_shifts(db, site, start, end),
         check_ins=checkin_records(db, site, start, end),
         invoices=invoice_records(db, site, start, end, include_rates),
-        incidents=incident_records(site, start, end),
+        incidents=incident_records(db, site, start, end),
         compliance=compliance_records(db, site, start, end),
     )

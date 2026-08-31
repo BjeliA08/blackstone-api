@@ -17,8 +17,8 @@ from ..clock import local_now_naive
 from ..database import get_db
 from ..deps import get_current_operator
 from ..models import (Assignment, ChatChannel, ChatMessage, ChatRead, Operator,
-                      Shift, ShiftStatus, Site, SiteAccess, SiteShift,
-                      SiteStatus, SiteType)
+                      Shift, ShiftStatus, Site, SiteAccess, SiteFeature,
+                      SiteShift, SiteStatus, SiteType)
 from ..schemas import SiteCardOut, SiteSummary
 
 router = APIRouter(tags=["sites"])
@@ -132,6 +132,10 @@ def my_sites(
         db.query(SiteAccess.site_id).filter(SiteAccess.operator_id == current.id).all()
     }
 
+    features_by_site: dict[uuid.UUID, list[str]] = {}
+    for row in db.query(SiteFeature).filter(SiteFeature.enabled.is_(True)).all():
+        features_by_site.setdefault(row.site_id, []).append(row.feature_key.value)
+
     now = _now()
     cards: list[SiteCardOut] = []
     for site in sites:
@@ -157,6 +161,7 @@ def my_sites(
             days_remaining=days_remaining,
             description=site.description, slot_count=site.slot_count,
             summary=_summary(db, site, current, now),
+            features=features_by_site.get(site.id, []),
         ))
 
     return cards

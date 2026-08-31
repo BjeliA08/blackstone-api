@@ -5,8 +5,8 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, model_validator
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
-                     OperationStatus, OperatorRole, ShiftStatus, SiteReportCategory,
-                     SiteStatus, SiteType)
+                     OperationStatus, OperatorRole, ShiftStatus, SiteFeatureKey,
+                     SiteReportCategory, SiteStatus, SiteType)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -271,6 +271,10 @@ class SiteShiftOut(BaseModel):
     # Keyed "0" (Monday) through "6" (Sunday). Null means every night needs
     # the site's flat slot_count.
     weekday_posts: Optional[dict[str, int]] = None
+    # This shift's own slot count — null falls back to the site's flat
+    # slot_count, same precedence weekday_posts has always had.
+    slot_count: Optional[int] = None
+    based_on_template_id: Optional[uuid.UUID] = None
 
 
 class SiteShiftCreate(BaseModel):
@@ -280,6 +284,8 @@ class SiteShiftCreate(BaseModel):
     end_time: Optional[time] = None
     sort_order: int = 0
     weekday_posts: Optional[dict[str, int]] = None
+    slot_count: Optional[int] = None
+    based_on_template_id: Optional[uuid.UUID] = None
 
 
 class SiteShiftPatch(BaseModel):
@@ -291,6 +297,7 @@ class SiteShiftPatch(BaseModel):
     active: Optional[bool] = None
     # Pass {} to clear back to the flat slot_count for every night.
     weekday_posts: Optional[dict[str, int]] = None
+    slot_count: Optional[int] = None
 
 
 class AvailabilityEntryIn(BaseModel):
@@ -516,6 +523,9 @@ class SiteCardOut(BaseModel):
     description: Optional[str] = None
     slot_count: int
     summary: SiteSummary = SiteSummary()
+    # Enabled feature keys for this site (see SiteFeatureKey) — the frontend
+    # gates nav/tiles off this instead of hardcoding a site slug.
+    features: list[str] = []
 
 
 # ── Personal operations ───────────────────────────────────────────────────────
@@ -1084,3 +1094,87 @@ class SiteReportOut(BaseModel):
     submitted_by: uuid.UUID
     submitted_by_name: str
     created_at: datetime
+
+
+# ── Site Builder ────────────────────────────────────────────────────────────
+
+class ShiftPatternTemplateShift(BaseModel):
+    name: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    default_slot_count: int = 1
+
+
+class ShiftPatternTemplateOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: Optional[str] = None
+    default_shifts: list[ShiftPatternTemplateShift]
+
+
+class SiteCreate(BaseModel):
+    name: str
+    slug: str
+    site_type: SiteType = SiteType.permanent
+    starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    description: Optional[str] = None
+    color: str = "#888888"
+    slot_count: int = 1
+
+
+class SiteBuilderSiteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    name: str
+    slug: str
+    color: str
+    site_type: SiteType
+    status: SiteStatus
+    starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    description: Optional[str] = None
+    slot_count: int
+
+
+class ApplyShiftPatternShift(BaseModel):
+    name: str
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    slot_count: Optional[int] = None
+
+
+class ApplyShiftPatternRequest(BaseModel):
+    # Either supply a template to copy from, or leave it null and provide
+    # `shifts` directly for a fully custom pattern ("start from scratch").
+    template_id: Optional[uuid.UUID] = None
+    shifts: Optional[list[ApplyShiftPatternShift]] = None
+
+
+class SitePositionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    site_id: uuid.UUID
+    name: str
+    is_default_position: bool
+    sort_order: int
+
+
+class SitePositionCreate(BaseModel):
+    name: str
+    is_default_position: bool = False
+    sort_order: int = 0
+
+
+class SitePositionAssignRequest(BaseModel):
+    shift_pattern_id: uuid.UUID
+    slot_index: int
+
+
+class SiteFeatureOut(BaseModel):
+    feature_key: SiteFeatureKey
+    enabled: bool
+
+
+class SiteFeaturePatch(BaseModel):
+    enabled: bool

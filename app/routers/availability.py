@@ -4,11 +4,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..deps import get_current_operator, require_director
+from ..deps import get_current_operator, require_director, require_site_feature
 from ..business import narrows_shift, shifts_are_consecutive
 from ..models import (Assignment, AvailabilityEntry, AvailabilityPeriod,
                       AvailabilityStatus, AvailabilitySubmission, CoverageType,
-                      Operator, Shift, ShiftStatus, Site, SiteShift)
+                      Operator, Shift, ShiftStatus, Site, SiteFeatureKey, SiteShift)
 from ..scheduler import generate_schedule
 from ..schemas import (ApproveDraftResult, AssignmentOut, ShiftOut,
                        AvailabilityEntryOut, AvailabilityPeriodCreate,
@@ -46,6 +46,8 @@ def _build_site_shift_out(ss: SiteShift) -> SiteShiftOut:
         sort_order=ss.sort_order,
         active=ss.active,
         weekday_posts=ss.weekday_posts,
+        slot_count=ss.slot_count,
+        based_on_template_id=ss.based_on_template_id,
     )
 
 
@@ -161,13 +163,16 @@ def create_site_shift(
         existing.start_time = body.start_time
         existing.end_time = body.end_time
         existing.weekday_posts = body.weekday_posts
+        existing.slot_count = body.slot_count
+        existing.based_on_template_id = body.based_on_template_id
         db.commit()
         db.refresh(existing)
         return _build_site_shift_out(existing)
 
     ss = SiteShift(site_id=site.id, shift_name=name, sort_order=body.sort_order,
                    start_time=body.start_time, end_time=body.end_time,
-                   weekday_posts=body.weekday_posts)
+                   weekday_posts=body.weekday_posts, slot_count=body.slot_count,
+                   based_on_template_id=body.based_on_template_id)
     db.add(ss)
     db.commit()
     db.refresh(ss)
@@ -203,6 +208,8 @@ def patch_site_shift(
         ss.active = body.active
     if body.weekday_posts is not None:
         ss.weekday_posts = body.weekday_posts or None
+    if body.slot_count is not None:
+        ss.slot_count = body.slot_count
     db.commit()
     db.refresh(ss)
     return _build_site_shift_out(ss)
@@ -305,12 +312,16 @@ def upsert_my_submission(
             db.delete(e)
         db.flush()
 
-    valid_site_ids = {s.id for s in db.query(Site).filter(Site.active.is_(True)).all()}
+    sites_by_id = {s.id: s for s in db.query(Site).filter(Site.active.is_(True)).all()}
+    feature_checked: set[uuid.UUID] = set()
     coverage = _derive_coverage_types(db, body.entries)
     for idx, entry in enumerate(body.entries):
-        if entry.site_id not in valid_site_ids:
+        if entry.site_id not in sites_by_id:
             raise HTTPException(status_code=400,
                                 detail=f"Unknown site on entry for {entry.date} {entry.shift_name}")
+        if entry.site_id not in feature_checked:
+            require_site_feature(db, sites_by_id[entry.site_id], SiteFeatureKey.availability_submission)
+            feature_checked.add(entry.site_id)
         db.add(AvailabilityEntry(
             submission_id=sub.id,
             site_id=entry.site_id,

@@ -12,10 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
-from ..deps import require_director
+from ..deps import require_director, require_site_feature
 from ..documents import signed_pdf_url, upload_pdf
 from ..identity import role_names
-from ..models import Operator, RecordExport, Site
+from ..models import Operator, RecordExport, Site, SiteFeatureKey
 from ..pdf_export import build_pdf
 from ..schemas import RecordExportOut, RecordExportRequest, SiteRecordsOut
 from ..site_records import build_site_records
@@ -112,6 +112,7 @@ def export_site_records(
     db: Session = Depends(get_db),
 ):
     site = _site_or_404(db, slug)
+    require_site_feature(db, site, SiteFeatureKey.records_export)
 
     sections = [s for s in body.sections if s in ALL_SECTIONS]
     if not sections:

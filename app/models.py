@@ -312,16 +312,106 @@ class SiteShift(Base):
     # needs the site's flat slot_count — most sites never touch this.
     weekday_posts = Column(JSON, nullable=True)
 
+    # Per-shift slot count, added for Site Builder. Null falls back to the
+    # site's flat slot_count (via posts_required_on below), same as before —
+    # this only matters for a site whose shifts genuinely need different
+    # slot counts from each other, not just different by weekday.
+    slot_count = Column(Integer, nullable=True)
+    # Which library template this shift was created from, if any — informational
+    # only, never read by scheduling logic. Null for a fully custom shift.
+    based_on_template_id = Column(UUID(as_uuid=True), ForeignKey("shift_pattern_templates.id"), nullable=True)
+
     site = relationship("Site")
+    based_on_template = relationship("ShiftPatternTemplate")
 
     def posts_required_on(self, weekday: int, default: int) -> int:
         """`default` is the site's flat slot_count, passed in rather than read
-        off self.site so callers already holding the Site avoid a lazy load."""
+        off self.site so callers already holding the Site avoid a lazy load.
+        This shift's own slot_count (if set) takes precedence over `default`,
+        and a weekday override takes precedence over both."""
+        base = self.slot_count if self.slot_count is not None else default
         if self.weekday_posts:
             override = self.weekday_posts.get(str(weekday))
             if override is not None:
                 return int(override)
-        return default
+        return base
+
+
+class ShiftPatternTemplate(Base):
+    """Seed data, not user-creatable — a fixed library of starting patterns
+    offered in Site Builder's Step 2. Never referenced by scheduling logic;
+    only `SiteShift.based_on_template_id` points back to these, informationally."""
+    __tablename__ = "shift_pattern_templates"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    # [{name, start_time, end_time, default_slot_count}, ...]
+    default_shifts = Column(JSON, nullable=False)
+
+
+class SitePosition(Base):
+    """A named position an operator can be assigned to at a site — e.g.
+    "Security Operator", "Site Lead". Genuinely per-site rows, not shared
+    across sites, so one site's positions can be renamed/reordered/removed
+    without touching any other site. The "reusable across sites" part of
+    the spec is a suggested-names list in the frontend picker, not a shared
+    DB identity."""
+    __tablename__ = "site_positions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    # The position auto-applied to a slot with no explicit assignment. Exactly
+    # one row per site should have this true — enforced in application code,
+    # not a DB constraint, since "exactly one" partial-unique constraints are
+    # awkward across engines and this is cheap to check on write.
+    is_default_position = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    site = relationship("Site")
+
+
+class SitePositionAssignment(Base):
+    """Overrides the site's default position for one specific slot on one
+    specific shift. Absence of a row here means "use the site's default
+    position" — most slots at most sites never need one."""
+    __tablename__ = "site_position_assignments"
+    __table_args__ = (UniqueConstraint("shift_pattern_id", "slot_index", name="uq_site_position_slot"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shift_pattern_id = Column(UUID(as_uuid=True), ForeignKey("site_shifts.id", ondelete="CASCADE"), nullable=False)
+    slot_index = Column(Integer, nullable=False)
+    position_id = Column(UUID(as_uuid=True), ForeignKey("site_positions.id", ondelete="CASCADE"), nullable=False)
+
+    shift_pattern = relationship("SiteShift")
+    position = relationship("SitePosition")
+
+
+class SiteFeatureKey(str, enum.Enum):
+    sos = "sos"
+    chat = "chat"
+    invoicing = "invoicing"
+    camera_monitoring = "camera_monitoring"
+    records_export = "records_export"
+    availability_submission = "availability_submission"
+    check_in_check_out = "check_in_check_out"
+
+
+class SiteFeature(Base):
+    """Per-site on/off switch for an optional part of the app. A site with
+    a feature disabled must be rejected server-side by whatever endpoint
+    that feature lives behind, not just hidden in the UI — see
+    require_site_feature() in app/deps.py."""
+    __tablename__ = "site_features"
+    __table_args__ = (UniqueConstraint("site_id", "feature_key", name="uq_site_feature"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=False)
+    feature_key = Column(SAEnum(SiteFeatureKey), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+
+    site = relationship("Site")
 
 
 class Invoice(Base):

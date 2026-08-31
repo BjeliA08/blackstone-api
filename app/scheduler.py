@@ -29,10 +29,17 @@ from .business import (Candidate, covered_window, minutes_to_time,
                        shift_window_minutes, times_overlap)
 from .models import (Assignment, AvailabilityEntry, AvailabilityPeriod,
                      AvailabilitySubmission, CoverageType, Operator, Shift,
-                     ShiftStatus, Site, SiteAccess, SiteShift)
+                     ShiftStatus, Site, SiteAccess, SitePosition,
+                     SitePositionAssignment, SiteShift)
 
+# The remainder tail after a partial fallback fill isn't a real post anyone
+# was assigned to work — it's a system-generated label marking a gap, so it
+# stays a constant rather than something Site Builder configures.
 REMAINDER_POSITION = "Uncovered remainder"
-DEFAULT_POSITION = "Security Operator"
+# Used only if a site somehow has no position configured at all (shouldn't
+# happen — every site gets a default position at creation — but scheduling
+# should never hard-fail over a missing position row).
+FALLBACK_POSITION = "Security Operator"
 
 
 @dataclass
@@ -140,6 +147,25 @@ def generate_schedule(
     for row in db.query(SiteAccess).all():
         access.setdefault(row.operator_id, set()).add(row.site_id)
 
+    # Position for each slot: an explicit per-(shift, slot_index) assignment
+    # wins; otherwise fall back to the site's default position. Built once
+    # up front rather than queried per-slot.
+    default_position_by_site: dict[uuid.UUID, str] = {
+        row.site_id: row.name
+        for row in db.query(SitePosition).filter(SitePosition.is_default_position.is_(True)).all()
+    }
+    position_by_slot: dict[tuple[uuid.UUID, int], str] = {
+        (row.shift_pattern_id, row.slot_index): row.position.name
+        for row in db.query(SitePositionAssignment).options(joinedload(SitePositionAssignment.position)).all()
+    }
+
+    def _position_for(ss: SiteShift, site: Site, slot_index: int) -> str:
+        return (
+            position_by_slot.get((ss.id, slot_index))
+            or default_position_by_site.get(site.id)
+            or FALLBACK_POSITION
+        )
+
     operators = {
         o.id: o for o in db.query(Operator).filter(Operator.active.is_(True)).all()
     }
@@ -201,7 +227,7 @@ def generate_schedule(
                         shift_id=shift.id, slot_index=slot_index,
                         operator_id=None,
                         start_time=ss.start_time, end_time=ss.end_time,
-                        position=DEFAULT_POSITION, accepted=False,
+                        position=_position_for(ss, site, slot_index), accepted=False,
                     ))
                     result.unfilled.append(UnfilledSlot(
                         date=day, site_slug=site.slug, shift_name=ss.shift_name,
@@ -217,7 +243,7 @@ def generate_schedule(
                     shift_id=shift.id, slot_index=slot_index,
                     operator_id=op.id,
                     start_time=cov_start, end_time=cov_end,
-                    position=DEFAULT_POSITION, accepted=False,
+                    position=_position_for(ss, site, slot_index), accepted=False,
                 ))
                 load.add(op.id, day, cov_start, cov_end)
                 result.slots_filled += 1

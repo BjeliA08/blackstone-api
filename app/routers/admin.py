@@ -15,11 +15,16 @@ from ..schemas import (AssignRoleRequest, GrantSiteRequest, InviteCodeCreate,
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-SITE_LEAD_SLUG = {
-    "shelter_site_lead": "shelter",
-    "club101_site_lead": "club101",
-    "starhall_site_lead": "starhall",
-}
+SITE_LEAD_SUFFIX = "_site_lead"
+
+
+def site_lead_slug(role_name: str) -> str | None:
+    """"{slug}_site_lead" is the convention for a site's lead role — derived
+    from the name so a new site (via Site Builder) gets this for free,
+    rather than needing an entry added to a fixed dict."""
+    if role_name.endswith(SITE_LEAD_SUFFIX):
+        return role_name[: -len(SITE_LEAD_SUFFIX)]
+    return None
 
 
 def _build_operator_with_roles(op: Operator) -> OperatorWithRoles:
@@ -134,8 +139,8 @@ def assign_role(
         ))
 
     # Auto-grant site access for site lead roles
-    if body.role_name in SITE_LEAD_SLUG:
-        slug = SITE_LEAD_SLUG[body.role_name]
+    slug = site_lead_slug(body.role_name)
+    if slug:
         site = db.query(Site).filter(Site.slug == slug).first()
         if site:
             existing_access = db.query(SiteAccess).filter(
