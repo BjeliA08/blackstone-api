@@ -971,20 +971,29 @@ class RecordExportOut(BaseModel):
 # validates the raw `details` dict against the right one before storing it.
 
 class NarcanReportDetails(BaseModel):
+    narcan_type: str  # "nasal" or "intramuscular"
     doses_administered: int
-    recipient_description: str
+    recipient_first_name: str
+    recipient_last_name: str
     naloxone_response: str
+    other_operators_involved: Optional[str] = None
     ems_called: bool
+    # Only meaningful when ems_called is true; the frontend only asks for it
+    # in that case, but nothing here requires the pairing — a bus number
+    # without ems_called is just an incomplete-but-valid report.
+    ems_bus_number: Optional[str] = None
 
 
 class IncidentReportDetails(BaseModel):
     severity: str
-    persons_involved: str
+    person_involved_first_name: Optional[str] = None
+    person_involved_last_name: Optional[str] = None
     action_taken: str
 
 
 class EjectionReportDetails(BaseModel):
-    person_ejected: str
+    ejected_first_name: str
+    ejected_last_name: str
     reason: str
     banned_duration: Optional[str] = None
     police_involved: bool = False
