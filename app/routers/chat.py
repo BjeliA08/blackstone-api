@@ -28,13 +28,14 @@ SITE_LEAD_ROLES = {"shelter_site_lead", "club101_site_lead", "starhall_site_lead
 
 MAX_BODY_CHARS = 4000
 
-# Sites first, then the narrowing group channels.
+# Sites first, then the narrowing group channels, DMs last.
 _TYPE_ORDER = {
     ChatChannelType.site: 0,
     ChatChannelType.operation: 1,
     ChatChannelType.site_leads: 2,
     ChatChannelType.directors: 3,
     ChatChannelType.admin: 4,
+    ChatChannelType.direct: 5,
 }
 
 
@@ -60,9 +61,13 @@ def _role_names(db: Session, op: Operator) -> set[str]:
 
 
 def _can_access(channel: ChatChannel, roles: set[str], site_ids: set[uuid.UUID],
-                operation_ids: set[uuid.UUID]) -> bool:
+                operation_ids: set[uuid.UUID], operator_id: uuid.UUID) -> bool:
+    if channel.channel_type == ChatChannelType.direct:
+        # Deliberately not covered by the admin-sees-everything rule below —
+        # these are private between the two people in them, full stop.
+        return operator_id in (channel.dm_operator_a_id, channel.dm_operator_b_id)
     if "admin" in roles:
-        return True  # Admin sees every channel, by design.
+        return True  # Admin sees every other channel, by design.
     if channel.channel_type == ChatChannelType.site:
         return channel.site_id is not None and channel.site_id in site_ids
     if channel.channel_type == ChatChannelType.site_leads:
@@ -95,7 +100,7 @@ def _accessible(db: Session, op: Operator) -> list[ChatChannel]:
     }
     operation_ids = _operation_ids_for(db, op)
     channels = db.query(ChatChannel).options(joinedload(ChatChannel.site)).all()
-    allowed = [c for c in channels if _can_access(c, roles, site_ids, operation_ids)]
+    allowed = [c for c in channels if _can_access(c, roles, site_ids, operation_ids, op.id)]
     allowed.sort(key=lambda c: (_TYPE_ORDER.get(c.channel_type, 9), c.name.lower()))
     return allowed
 
@@ -109,7 +114,7 @@ def _channel_or_403(db: Session, op: Operator, slug: str) -> ChatChannel:
         r[0] for r in db.query(SiteAccess.site_id).filter(SiteAccess.operator_id == op.id).all()
     }
     operation_ids = _operation_ids_for(db, op)
-    if not _can_access(channel, roles, site_ids, operation_ids):
+    if not _can_access(channel, roles, site_ids, operation_ids, op.id):
         raise HTTPException(status_code=403, detail="You do not have access to this channel")
     return channel
 
@@ -174,16 +179,77 @@ def list_channels(
         .all()
     )
 
-    return [
-        ChatChannelOut(
-            id=c.id, slug=c.slug, name=c.name,
+    # A DM channel has no name that means the same thing to both people in
+    # it — resolve "the other operator" per channel, for this viewer.
+    other_ids = {
+        (c.dm_operator_b_id if c.dm_operator_a_id == current.id else c.dm_operator_a_id)
+        for c in channels if c.channel_type == ChatChannelType.direct
+    }
+    others = {
+        o.id: o for o in db.query(Operator).filter(Operator.id.in_(other_ids)).all()
+    } if other_ids else {}
+
+    def _for(c: ChatChannel) -> ChatChannelOut:
+        name = c.name
+        other_id = None
+        other_photo = None
+        if c.channel_type == ChatChannelType.direct:
+            other_id = c.dm_operator_b_id if c.dm_operator_a_id == current.id else c.dm_operator_a_id
+            other = others.get(other_id)
+            if other:
+                name = other.full_name
+                other_photo = signed_url(other.photo_key) if other.photo_key else None
+        return ChatChannelOut(
+            id=c.id, slug=c.slug, name=name,
             channel_type=c.channel_type,
             site_slug=c.site.slug if c.site else None,
             unread_count=unread_counts.get(c.id, 0),
             last_message_at=latest.get(c.id),
+            dm_other_operator_id=other_id,
+            dm_other_operator_photo_url=other_photo,
         )
-        for c in channels
-    ]
+
+    return [_for(c) for c in channels]
+
+
+@router.post("/dm/{operator_id}", response_model=ChatChannelOut, status_code=201)
+def open_dm(
+    operator_id: uuid.UUID,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Find-or-create the private channel with this operator. Idempotent —
+    calling it again just hands back the same channel."""
+    if operator_id == current.id:
+        raise HTTPException(status_code=400, detail="You cannot message yourself")
+
+    other = db.get(Operator, operator_id)
+    if not other or not other.active:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    a_id, b_id = sorted([current.id, operator_id], key=str)
+    channel = (
+        db.query(ChatChannel)
+        .filter(ChatChannel.channel_type == ChatChannelType.direct,
+                ChatChannel.dm_operator_a_id == a_id, ChatChannel.dm_operator_b_id == b_id)
+        .first()
+    )
+    if not channel:
+        channel = ChatChannel(
+            slug=f"dm-{uuid.uuid4().hex[:16]}", name="Direct Message",
+            channel_type=ChatChannelType.direct,
+            dm_operator_a_id=a_id, dm_operator_b_id=b_id,
+        )
+        db.add(channel)
+        db.commit()
+        db.refresh(channel)
+
+    return ChatChannelOut(
+        id=channel.id, slug=channel.slug, name=other.full_name,
+        channel_type=channel.channel_type,
+        dm_other_operator_id=other.id,
+        dm_other_operator_photo_url=signed_url(other.photo_key) if other.photo_key else None,
+    )
 
 
 # ── Messages ──────────────────────────────────────────────────────────────────

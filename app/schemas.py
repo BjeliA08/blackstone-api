@@ -400,11 +400,16 @@ class ChatChannelOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     slug: str
+    # For channel_type == direct, this is the other operator's name — there's
+    # no single stored name that would mean the same thing to both sides.
     name: str
     channel_type: ChatChannelType
     site_slug: Optional[str] = None
     unread_count: int = 0
     last_message_at: Optional[datetime] = None
+    # Only set for channel_type == direct.
+    dm_other_operator_id: Optional[uuid.UUID] = None
+    dm_other_operator_photo_url: Optional[str] = None
 
 
 class ChatMessageOut(BaseModel):

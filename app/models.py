@@ -86,6 +86,7 @@ class ChatChannelType(str, enum.Enum):
     directors = "directors"
     admin = "admin"
     operation = "operation"
+    direct = "direct"
 
 
 class Operator(Base):
@@ -554,6 +555,9 @@ class AvailabilityEntry(Base):
 
 class ChatChannel(Base):
     __tablename__ = "chat_channels"
+    __table_args__ = (
+        UniqueConstraint("dm_operator_a_id", "dm_operator_b_id", name="uq_dm_pair"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     slug = Column(String, unique=True, nullable=False)
@@ -561,6 +565,11 @@ class ChatChannel(Base):
     channel_type = Column(SAEnum(ChatChannelType), nullable=False)
     site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id", ondelete="CASCADE"), nullable=True)
     operation_id = Column(UUID(as_uuid=True), ForeignKey("operations.id", ondelete="CASCADE"), nullable=True)
+    # Only set for channel_type == direct — always stored with a < b (as
+    # strings) so a given pair of operators maps to exactly one row,
+    # regardless of who started the conversation.
+    dm_operator_a_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=True)
+    dm_operator_b_id = Column(UUID(as_uuid=True), ForeignKey("operators.id", ondelete="CASCADE"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     site = relationship("Site")
