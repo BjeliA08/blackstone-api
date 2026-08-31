@@ -115,16 +115,27 @@ def list_reports(
     category: Optional[SiteReportCategory] = None,
     date_from: Optional[date] = Query(None, alias="from"),
     date_to: Optional[date] = Query(None, alias="to"),
-    _: Operator = Depends(require_director),
+    current: Operator = Depends(get_current_operator),
     db: Session = Depends(get_db),
 ):
+    """Director/Admin see every report for the site. A plain operator only
+    sees their own — enough to find and delete something they mis-filed,
+    without opening up everyone else's reports to everyone on site."""
+    from ..identity import role_names
+
     site = _get_enabled_site(db, slug)
+    roles = role_names(db, current)
+    is_director_or_admin = bool(roles & {"admin", "director"})
+    if not is_director_or_admin:
+        _require_site_access(db, current, site)
 
     q = (
         db.query(SiteReport)
         .options(joinedload(SiteReport.submitted_by_operator))
         .filter(SiteReport.site_id == site.id)
     )
+    if not is_director_or_admin:
+        q = q.filter(SiteReport.submitted_by == current.id)
     if category:
         q = q.filter(SiteReport.category == category)
     if date_from:
