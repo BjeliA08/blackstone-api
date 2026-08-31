@@ -984,8 +984,11 @@ class RecordExportOut(BaseModel):
 class NarcanReportDetails(BaseModel):
     narcan_type: str  # "nasal" or "intramuscular"
     doses_administered: int
-    recipient_first_name: str
-    recipient_last_name: str
+    # Set when the recipient couldn't be identified — name fields are then
+    # omitted from the record entirely rather than left blank.
+    unknown_subject: bool = False
+    recipient_first_name: Optional[str] = None
+    recipient_last_name: Optional[str] = None
     naloxone_response: str
     other_operators_involved: Optional[str] = None
     ems_called: bool
@@ -997,13 +1000,32 @@ class NarcanReportDetails(BaseModel):
     # as ems_bus_number/ems_called above.
     injection_site: Optional[str] = None
 
+    @model_validator(mode="after")
+    def _name_required_unless_unknown(self):
+        if not self.unknown_subject and not (self.recipient_first_name and self.recipient_last_name):
+            raise ValueError("Provide the recipient's name, or check Unknown Subject")
+        if self.unknown_subject:
+            self.recipient_first_name = None
+            self.recipient_last_name = None
+        return self
+
 
 class IncidentReportDetails(BaseModel):
     severity: str
+    # Set when the person involved couldn't be identified — name fields are
+    # then omitted from the record entirely rather than left blank.
+    unknown_subject: bool = False
     person_involved_first_name: Optional[str] = None
     person_involved_last_name: Optional[str] = None
     action_taken: str
     physical_intervention: bool = False
+
+    @model_validator(mode="after")
+    def _clear_name_if_unknown(self):
+        if self.unknown_subject:
+            self.person_involved_first_name = None
+            self.person_involved_last_name = None
+        return self
 
 
 class EjectionReportDetails(BaseModel):
