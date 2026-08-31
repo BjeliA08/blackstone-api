@@ -982,6 +982,9 @@ class NarcanReportDetails(BaseModel):
     # in that case, but nothing here requires the pairing — a bus number
     # without ems_called is just an incomplete-but-valid report.
     ems_bus_number: Optional[str] = None
+    # Only meaningful when narcan_type is "intramuscular" — same relationship
+    # as ems_bus_number/ems_called above.
+    injection_site: Optional[str] = None
 
 
 class IncidentReportDetails(BaseModel):
