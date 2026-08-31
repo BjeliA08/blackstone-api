@@ -1002,6 +1002,7 @@ class EjectionReportDetails(BaseModel):
 class EPSCallReportDetails(BaseModel):
     reason_for_call: str
     unit_or_badge_number: Optional[str] = None
+    eps_file_number: Optional[str] = None
     outcome: str
 
 
