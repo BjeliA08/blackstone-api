@@ -7,7 +7,9 @@ sites later is a one-line change, not a migration.
 
 Any operator with SiteAccess to the site can file a report — this happens
 during or right after a shift, by whoever was there, not after the fact by a
-director. Directors/Admin can view everything for the site.
+director. Directors/Admin can view everything for the site. A report can be
+deleted by whoever submitted it (fixing a mis-filed entry) or by Director/
+Admin — nobody else, since these are meant to stand as a record.
 """
 import uuid
 from datetime import date, datetime
@@ -132,3 +134,30 @@ def list_reports(
 
     reports = q.order_by(SiteReport.occurred_at.desc()).all()
     return [_out(r) for r in reports]
+
+
+@router.delete("/{report_id}", status_code=204)
+def delete_report(
+    slug: str,
+    report_id: uuid.UUID,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    from ..identity import role_names
+
+    site = _get_enabled_site(db, slug)
+    report = (
+        db.query(SiteReport)
+        .filter(SiteReport.id == report_id, SiteReport.site_id == site.id)
+        .first()
+    )
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    is_submitter = report.submitted_by == current.id
+    is_director_or_admin = bool(role_names(db, current) & {"admin", "director"})
+    if not is_submitter and not is_director_or_admin:
+        raise HTTPException(status_code=403, detail="Only the submitter or a Director/Admin can delete this report")
+
+    db.delete(report)
+    db.commit()
