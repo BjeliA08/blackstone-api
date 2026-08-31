@@ -992,6 +992,7 @@ class IncidentReportDetails(BaseModel):
     person_involved_first_name: Optional[str] = None
     person_involved_last_name: Optional[str] = None
     action_taken: str
+    physical_intervention: bool = False
 
 
 class EjectionReportDetails(BaseModel):
