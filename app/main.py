@@ -1,11 +1,24 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from .chat_retention import retention_loop
 from .routers import auth, me, director, admin, sos, availability, chat, sites, invoices, valor, records, site_reports
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(retention_loop())
+    yield
+    task.cancel()
+
 
 app = FastAPI(
     title="Blackstone Security API",
     description="Backend for Blackstone Security operations — auth, scheduling, check-in/out.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

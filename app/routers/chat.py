@@ -265,6 +265,32 @@ def send_message(
     )
 
 
+@router.delete("/channels/{slug}/messages/{message_id}", status_code=204)
+def delete_message(
+    slug: str,
+    message_id: uuid.UUID,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Self-delete only — you can remove your own message, not anyone
+    else's, admin included. Comms are meant to stay a record of what each
+    person actually said; nobody gets to edit that after the fact except by
+    retracting their own words."""
+    channel = _channel_or_403(db, current, slug)
+    msg = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.id == message_id, ChatMessage.channel_id == channel.id)
+        .first()
+    )
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.operator_id != current.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own messages")
+
+    db.delete(msg)
+    db.commit()
+
+
 @router.post("/channels/{slug}/read", response_model=ChatReadResult)
 def mark_read(
     slug: str,
