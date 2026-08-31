@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, time
 from typing import Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
                      OperationStatus, OperatorRole, ShiftStatus, SiteReportCategory,
@@ -1007,8 +1007,11 @@ class IncidentReportDetails(BaseModel):
 
 
 class EjectionReportDetails(BaseModel):
-    ejected_first_name: str
-    ejected_last_name: str
+    # Set when whoever was ejected couldn't be identified — the name fields
+    # are then omitted from the document entirely rather than left blank.
+    unknown_subject: bool = False
+    ejected_first_name: Optional[str] = None
+    ejected_last_name: Optional[str] = None
     reason: str
     # No ban-duration field here — an ejection gets its ban length from the
     # SOS entry filed for it, not duplicated on this report.
@@ -1016,6 +1019,15 @@ class EjectionReportDetails(BaseModel):
     # Only meaningful when police_involved is true — same relationship as
     # ems_bus_number/ems_called on NarcanReportDetails.
     eps_file_number: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _name_required_unless_unknown(self):
+        if not self.unknown_subject and not (self.ejected_first_name and self.ejected_last_name):
+            raise ValueError("Provide the ejected person's name, or check Unknown Subject")
+        if self.unknown_subject:
+            self.ejected_first_name = None
+            self.ejected_last_name = None
+        return self
     eps_regiment_number: Optional[str] = None
 
 
