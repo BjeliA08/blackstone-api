@@ -29,8 +29,12 @@ def _icons_for(row: AppSettings, request: Request) -> dict[str, str]:
         return icon_urls(row.app_icon_key)
     # The frontend is served from a different origin than this API, so these
     # need to be absolute — a browser resolving a relative path would look
-    # for it on its own origin instead.
-    base = str(request.base_url).rstrip("/")
+    # for it on its own origin instead. Railway terminates TLS at the proxy
+    # and forwards to this process over plain HTTP, so request.base_url's
+    # scheme is wrong unless the forwarded-proto header is honored.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.url.netloc)
+    base = f"{proto}://{host}"
     return {str(size): f"{base}{DEFAULT_ICON_BASE}/{size}.png" for size in ICON_SIZES}
 
 
