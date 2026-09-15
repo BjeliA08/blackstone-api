@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -24,10 +24,14 @@ def _get_or_create(db: Session) -> AppSettings:
     return row
 
 
-def _icons_for(row: AppSettings) -> dict[str, str]:
+def _icons_for(row: AppSettings, request: Request) -> dict[str, str]:
     if row.app_icon_key:
         return icon_urls(row.app_icon_key)
-    return {str(size): f"{DEFAULT_ICON_BASE}/{size}.png" for size in ICON_SIZES}
+    # The frontend is served from a different origin than this API, so these
+    # need to be absolute — a browser resolving a relative path would look
+    # for it on its own origin instead.
+    base = str(request.base_url).rstrip("/")
+    return {str(size): f"{base}{DEFAULT_ICON_BASE}/{size}.png" for size in ICON_SIZES}
 
 
 class AppSettingsOut(BaseModel):
@@ -44,19 +48,20 @@ class AppSettingsPatch(BaseModel):
 
 
 @router.get("/app-settings", response_model=AppSettingsOut)
-def get_app_settings(db: Session = Depends(get_db)):
+def get_app_settings(request: Request, db: Session = Depends(get_db)):
     row = _get_or_create(db)
     return AppSettingsOut(
         app_name=row.app_name,
         theme_color=row.theme_color,
         background_color=row.background_color,
-        icons=_icons_for(row),
+        icons=_icons_for(row, request),
     )
 
 
 @router.patch("/admin/app-settings", response_model=AppSettingsOut)
 def patch_app_settings(
     body: AppSettingsPatch,
+    request: Request,
     db: Session = Depends(get_db),
     current=Depends(require_admin),
 ):
@@ -73,12 +78,13 @@ def patch_app_settings(
         app_name=row.app_name,
         theme_color=row.theme_color,
         background_color=row.background_color,
-        icons=_icons_for(row),
+        icons=_icons_for(row, request),
     )
 
 
 @router.post("/admin/app-settings/icon", response_model=AppSettingsOut)
 async def upload_app_icon(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current=Depends(require_admin),
@@ -94,14 +100,14 @@ async def upload_app_icon(
         app_name=row.app_name,
         theme_color=row.theme_color,
         background_color=row.background_color,
-        icons=_icons_for(row),
+        icons=_icons_for(row, request),
     )
 
 
 @router.get("/manifest.json")
-def get_manifest(db: Session = Depends(get_db)):
+def get_manifest(request: Request, db: Session = Depends(get_db)):
     row = _get_or_create(db)
-    icons = _icons_for(row)
+    icons = _icons_for(row, request)
     name = row.app_name
     short_name = name if len(name) <= SHORT_NAME_MAX else name[:SHORT_NAME_MAX]
 
