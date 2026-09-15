@@ -754,3 +754,19 @@ class InviteCode(Base):
         if self.expires_at is not None and now > self.expires_at:
             return False
         return self.use_count < self.max_uses
+
+
+class AppSettings(Base):
+    """Branding for the installable PWA — a singleton row (the app always
+    reads/creates the first one; nothing else references this table by id).
+    `app_icon_key` is a Cloudinary public-id prefix; the actual per-size URLs
+    are derived from it rather than stored, so there's nothing to keep in
+    sync when a size set changes."""
+    __tablename__ = "app_settings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    app_icon_key = Column(String, nullable=True)
+    app_name = Column(String, nullable=False, default="Blackstone Ops")
+    theme_color = Column(String, nullable=False, default="#c9a15a")
+    background_color = Column(String, nullable=False, default="#08090c")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

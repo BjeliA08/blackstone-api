@@ -3,8 +3,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .chat_retention import retention_loop
-from .routers import auth, me, director, admin, sos, availability, chat, sites, invoices, valor, records, site_reports, site_builder
+from .routers import auth, me, director, admin, sos, availability, chat, sites, invoices, valor, records, site_reports, site_builder, settings as settings_router
 
 
 @asynccontextmanager
@@ -43,6 +44,9 @@ app.include_router(records.router)
 app.include_router(site_reports.router)
 app.include_router(site_builder.router)
 app.include_router(site_builder.templates_router)
+app.include_router(settings_router.router)
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 @app.get("/health", tags=["health"])
