@@ -770,3 +770,49 @@ class AppSettings(Base):
     theme_color = Column(String, nullable=False, default="#c9a15a")
     background_color = Column(String, nullable=False, default="#08090c")
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class SOSStatus(str, enum.Enum):
+    pending = "pending"
+    active = "active"
+    expired = "expired"
+    rejected = "rejected"
+
+
+class SOSLength(str, enum.Enum):
+    days_7 = "7_days"
+    days_14 = "14_days"
+    days_30 = "30_days"
+    months_3 = "3_months"
+    months_6 = "6_months"
+    year_1 = "1_year"
+    indefinite = "indefinite"
+
+
+class SOSEntry(Base):
+    """A trespass/SOS registry entry — the Postgres-backed replacement for
+    the 'SOS Registry' Google Sheet. Photo storage follows the same private,
+    signed-URL discipline as operator photos (see app/photos.py): never a
+    public bucket, key resolved to a short-lived URL only for someone who's
+    already allowed to see it."""
+    __tablename__ = "sos_entries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    site_id = Column(UUID(as_uuid=True), ForeignKey("sites.id"), nullable=False)
+    name = Column(String, nullable=False)  # "LASTNAME, Firstname"
+    status = Column(SAEnum(SOSStatus), nullable=False, default=SOSStatus.pending)
+    trespassed = Column(Boolean, nullable=False, default=False)
+    reason = Column(Text, nullable=False)
+    length = Column(SAEnum(SOSLength), nullable=False)
+    date_posted = Column(Date, nullable=False)
+    calculated_end_date = Column(Date, nullable=True)  # null for indefinite
+    photo_key = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    submitted_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=False)
+    approved_by = Column(UUID(as_uuid=True), ForeignKey("operators.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    site = relationship("Site")
+    submitted_by_operator = relationship("Operator", foreign_keys=[submitted_by])
+    approved_by_operator = relationship("Operator", foreign_keys=[approved_by])

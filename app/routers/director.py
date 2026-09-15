@@ -134,6 +134,29 @@ def patch_operator(
     return op
 
 
+@router.get("/operators/hours-summary", response_model=list[HoursSummary])
+def operators_hours_summary(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2020),
+    _: Operator = Depends(require_director),
+    db: Session = Depends(get_db),
+):
+    """Every active operator's monthly total in one call, rather than the
+    frontend fanning out one request per operator."""
+    ops = db.query(Operator).filter(Operator.active.is_(True)).order_by(Operator.full_name).all()
+    return [
+        HoursSummary(
+            operator_id=op.id,
+            operator_name=op.full_name,
+            month=month,
+            year=year,
+            total_hours=hours_for_operator_month(db, op.id, month, year),
+            shift_count=0,
+        )
+        for op in ops
+    ]
+
+
 @router.get("/operators/{operator_id}/hours", response_model=HoursSummary)
 def operator_hours(
     operator_id: uuid.UUID,

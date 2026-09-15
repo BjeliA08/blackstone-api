@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from .models import (AvailabilityStatus, ChatChannelType, CheckInStatus,
                      CoverageType, InvoiceStatus, LicenceStatus, OnboardingStatus,
                      OperationStatus, OperatorRole, ShiftStatus, SiteFeatureKey,
-                     SiteReportCategory, SiteStatus, SiteType)
+                     SiteReportCategory, SiteStatus, SiteType, SOSLength, SOSStatus)
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -1178,3 +1178,47 @@ class SiteFeatureOut(BaseModel):
 
 class SiteFeaturePatch(BaseModel):
     enabled: bool
+
+
+# ── SOS ───────────────────────────────────────────────────────────────────────
+
+class SOSEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    site_id: uuid.UUID
+    site_name: Optional[str] = None
+    name: str
+    status: SOSStatus
+    trespassed: bool
+    reason: str
+    length: SOSLength
+    date_posted: date
+    calculated_end_date: Optional[date]
+    photo_url: Optional[str] = None
+    notes: Optional[str]
+    submitted_by: uuid.UUID
+    submitted_by_name: Optional[str] = None
+    approved_by: Optional[uuid.UUID]
+    approved_by_name: Optional[str] = None
+    reviewed_at: Optional[datetime]
+    created_at: datetime
+    requires_manager: bool = False
+
+
+class SOSEntryCreate(BaseModel):
+    site_id: uuid.UUID
+    name: str
+    trespassed: bool = False
+    reason: str
+    length: SOSLength
+    date_posted: date
+    notes: Optional[str] = None
+
+
+class SOSEntryPatch(BaseModel):
+    name: Optional[str] = None
+    trespassed: Optional[bool] = None
+    reason: Optional[str] = None
+    length: Optional[SOSLength] = None
+    notes: Optional[str] = None

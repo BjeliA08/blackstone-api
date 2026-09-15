@@ -964,3 +964,79 @@ async def upload_client_profile_photo(
     if old_key:
         purge_photo(old_key)
     return _build_client_profile_out(cp)
+
+
+# ── Open contracts ────────────────────────────────────────────────────────────
+
+@router.get("/open-contracts", response_model=list[ShiftOut])
+def my_open_contracts(
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Unfilled slots on upcoming approved shifts, at sites this operator
+    has access to. Each ShiftOut still carries every slot on that shift (not
+    just the open one) so the UI has context — is_open on each AssignmentOut
+    marks which are actually claimable."""
+    accessible_site_ids = [
+        row[0] for row in
+        db.query(SiteAccess.site_id).filter(SiteAccess.operator_id == current.id).all()
+    ]
+    if not accessible_site_ids:
+        return []
+
+    shifts = (
+        db.query(Shift)
+        .join(Assignment)
+        .filter(
+            Shift.site_id.in_(accessible_site_ids),
+            Shift.status == ShiftStatus.approved,
+            Shift.date >= local_today(),
+            Assignment.operator_id.is_(None),
+        )
+        .options(joinedload(Shift.assignments).joinedload(Assignment.operator),
+                 joinedload(Shift.site))
+        .distinct()
+        .order_by(Shift.date, Shift.shift_name)
+        .all()
+    )
+    return [_build_shift_out(s) for s in shifts]
+
+
+@router.post("/open-contracts/{assignment_id}/claim", response_model=AssignmentOut)
+def claim_open_contract(
+    assignment_id: uuid.UUID,
+    current: Operator = Depends(get_current_operator),
+    db: Session = Depends(get_db),
+):
+    """Self-service only — an operator claims a slot for themselves. Race-safe:
+    the WHERE clause only succeeds if the slot is still open at commit time,
+    so two people tapping the same open slot at once can't both win it."""
+    assignment = (
+        db.query(Assignment)
+        .join(Shift)
+        .filter(Assignment.id == assignment_id)
+        .options(joinedload(Assignment.shift))
+        .first()
+    )
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    has_access = (
+        db.query(SiteAccess)
+        .filter(SiteAccess.operator_id == current.id, SiteAccess.site_id == assignment.shift.site_id)
+        .first()
+    )
+    if not has_access:
+        raise HTTPException(status_code=403, detail="You do not have access to this site")
+
+    updated = (
+        db.query(Assignment)
+        .filter(Assignment.id == assignment_id, Assignment.operator_id.is_(None))
+        .update({"operator_id": current.id, "accepted": True})
+    )
+    db.commit()
+    if not updated:
+        raise HTTPException(status_code=409, detail="That slot was already claimed")
+
+    db.refresh(assignment)
+    return AssignmentOut.from_orm_with_name(assignment)
