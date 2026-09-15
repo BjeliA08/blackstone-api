@@ -803,7 +803,11 @@ class SOSEntry(Base):
     status = Column(SAEnum(SOSStatus), nullable=False, default=SOSStatus.pending)
     trespassed = Column(Boolean, nullable=False, default=False)
     reason = Column(Text, nullable=False)
-    length = Column(SAEnum(SOSLength), nullable=False)
+    # values_callable: SOSLength's member NAMES (days_30, months_3, ...) don't
+    # match its VALUES ("30_days", "3_months", ...) — Python identifiers can't
+    # start with a digit — but SQLAlchemy stores the name by default. Without
+    # this, every write mismatches the Postgres enum created from the values.
+    length = Column(SAEnum(SOSLength, values_callable=lambda enum_cls: [e.value for e in enum_cls]), nullable=False)
     date_posted = Column(Date, nullable=False)
     calculated_end_date = Column(Date, nullable=True)  # null for indefinite
     photo_key = Column(String, nullable=True)
